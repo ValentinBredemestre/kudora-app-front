@@ -72,13 +72,11 @@ async function connect(page, family, accountName = "alice") {
   await expect.poll(() => page.evaluate(() => window.KudoraChain.walletMode)).toBe(expectedMode);
 
   if (accountName !== "alice") {
-    await page.getByRole("button", { name: "Open connected account" }).click();
-    await page.getByTestId("local-account-switcher").getByRole("button", {
-      name: `${accountName[0].toUpperCase()}${accountName.slice(1)}`,
-      exact: true,
-    }).click();
+    await page.evaluate(({ mode, name }) => window.KudoraChainBridge.connect(mode, name), {
+      mode: expectedMode,
+      name: accountName,
+    });
     await expect.poll(() => page.evaluate(() => window.KudoraChain.accountName)).toBe(accountName);
-    await page.locator("[data-chain-close-panel]").click();
   }
 }
 

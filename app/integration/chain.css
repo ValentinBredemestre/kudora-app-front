@@ -8,45 +8,24 @@
   white-space: nowrap;
 }
 
-.k-chain-local-note {
-  margin-top: 24px;
-}
-
-.k-chain-local-tools {
-  display: grid;
-  gap: 12px;
-  padding: 18px;
-  border: 1px solid rgba(255, 255, 255, .1);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, .025);
-}
-
-.k-chain-local-tools > span,
 .k-chain-session-controls small {
   color: #ff64ca;
   font: 700 10px/1.2 var(--font-geist-mono, monospace);
   letter-spacing: .14em;
 }
 
-.k-chain-local-tools > div,
 .k-chain-session-controls {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.k-chain-local-tools button,
 .k-chain-session-controls button {
   padding: 9px 12px;
   border: 1px solid rgba(255, 255, 255, .13);
   border-radius: 999px;
   background: rgba(255, 255, 255, .025);
   color: inherit;
-}
-
-.k-chain-local-tools button.active {
-  border-color: #55ead8;
-  color: #55ead8;
 }
 
 .k-chain-empty-proposals,

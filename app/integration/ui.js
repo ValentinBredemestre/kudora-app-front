@@ -141,25 +141,17 @@ function openConnectPanel() {
         <button type="button" data-chain-connect="keplr"><span><strong>Keplr</strong></span><span class="glyph">→</span></button>
         <button type="button" data-chain-connect="metamask"><span><strong>MetaMask</strong></span><span class="glyph">→</span></button>
       </div>
-      <p class="security-note k-chain-local-note">On localnet, Alice is used as the disposable signer when the selected browser extension is not installed.</p>
     </div>`, "Connect a wallet");
 }
 
 function openConnectedPanel() {
   const current = account();
   if (!current) return openConnectPanel();
-  const localTools = state.chain.isLocal() ? `
-    <section class="k-chain-local-tools" data-testid="local-account-switcher">
-      <span>LOCAL DEVELOPMENT SIGNER</span>
-      <div>${Object.keys(state.chain.config.accounts).map((name) => `<button type="button" data-chain-account="${name}" class="${state.chain.accountName === name ? "active" : ""}">${escapeHtml(name[0].toUpperCase() + name.slice(1))}</button>`).join("")}</div>
-      <div><button type="button" data-chain-local-mode="local-metamask" class="${current.mode === "local-metamask" ? "active" : ""}">MetaMask path</button><button type="button" data-chain-local-mode="local-keplr" class="${current.mode === "local-keplr" ? "active" : ""}">Keplr path</button></div>
-    </section>` : "";
   openSidePanel(`
     ${panelHeader("CONNECTED WALLET", "Your public tags.", "Copy either tag when someone needs to send money to you.")}
     <div class="k-panel-body k-wallet-panel-body">
       <section class="k-wallet-address-card"><div><span>EVM TAG</span><strong data-testid="evm-address">${escapeHtml(current.evmAddress)}</strong><small>Your public Ethereum-compatible tag</small></div><button type="button" data-chain-copy="evm" aria-label="Copy EVM tag"><span>⧉</span> Copy tag</button></section>
       <section class="k-wallet-address-card"><div><span>COSMOS TAG</span><strong data-testid="cosmos-address">${escapeHtml(current.cosmosAddress)}</strong><small>Your public Kudora tag</small></div><button type="button" data-chain-copy="cosmos" aria-label="Copy Cosmos tag"><span>⧉</span> Copy tag</button></section>
-      ${localTools}
       <button type="button" class="k-disconnect-wallet" data-chain-disconnect>Disconnect Wallet</button>
     </div>`, "Your public tags");
 }
@@ -731,20 +723,6 @@ async function onClick(event) {
     event.preventDefault();
     event.stopImmediatePropagation();
     return connectWallet(connect);
-  }
-  const accountChoice = target.closest("[data-chain-account]")?.dataset.chainAccount;
-  if (accountChoice) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    await connectWallet(state.chain.walletMode, accountChoice);
-    return openConnectedPanel();
-  }
-  const localMode = target.closest("[data-chain-local-mode]")?.dataset.chainLocalMode;
-  if (localMode) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    await connectWallet(localMode, state.chain.accountName);
-    return openConnectedPanel();
   }
   if (target.closest("[data-chain-disconnect]")) {
     event.preventDefault();
