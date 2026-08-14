@@ -186,6 +186,8 @@ function patchProposalReactions() {
 
 function patchAskButtons() {
   document.querySelectorAll(".peek-ask").forEach((button) => {
+    if (button.dataset.kudoraAskBound) return;
+    button.dataset.kudoraAskBound = "true";
     const text = button.textContent.trim();
     if (text.startsWith("Sent")) return;
     const name = text.replace(/^Ask\s*/, "").trim();
@@ -217,6 +219,7 @@ function patchNavigation() {
   document.querySelectorAll(".desktop-nav, .mobile-nav").forEach((nav) => {
     [...nav.querySelectorAll(":scope > button")].forEach((button) => {
       const label = button.textContent.trim();
+      if (/Discuss/i.test(label)) button.remove();
       if (!button.classList.contains("k-account-nav") && !button.dataset.accountExitBound) {
         button.dataset.accountExitBound = "true";
         button.addEventListener("click", deactivateAccount);
@@ -697,6 +700,12 @@ window.KudoraHumanUI = {
   deactivateAccount,
   showToast,
   closePanel,
+  patch: patchAll,
+  recordTransaction(transaction) {
+    state.transactions.unshift(transaction);
+    saveState();
+    renderTransactions();
+  },
 };
 
 function queuePatch() {
@@ -708,7 +717,19 @@ function queuePatch() {
   });
 }
 
-const observer = new MutationObserver(queuePatch);
-observer.observe(document.documentElement, { childList: true, subtree: true });
-window.addEventListener("DOMContentLoaded", patchAll, { once: true });
-patchAll();
+async function startEnhancements() {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const root = document.querySelector(".app-shell");
+    if (root && Object.keys(root).some((key) => key.startsWith("__reactFiber") || key.startsWith("__reactProps") || key.startsWith("__reactContainer"))) break;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  const patchAfterInteraction = () => {
+    queuePatch();
+    setTimeout(queuePatch, 100);
+  };
+  document.addEventListener("click", patchAfterInteraction, true);
+  document.addEventListener("submit", patchAfterInteraction, true);
+  patchAll();
+}
+
+startEnhancements();

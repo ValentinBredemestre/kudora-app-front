@@ -220,9 +220,11 @@ function evmFromCosmos(address) {
   return hexFromBytes(Uint8Array.from(bech32.fromWords(bech32.decode(address, false).words)));
 }
 
-function contentBytes(text) {
-  const payload = encoder.encode(JSON.stringify({ v: 1, t: "text", text: text.trim() }));
-  if (!text.trim()) throw new Error("Message content is required");
+function contentBytes(content) {
+  const canonical = typeof content === "string" ? { v: 1, t: "text", text: content.trim() } : content;
+  if (!canonical || canonical.v !== 1 || !canonical.t) throw new Error("Discussion payload must have version 1 and a type");
+  if (canonical.t === "text" && !canonical.text?.trim()) throw new Error("Message content is required");
+  const payload = encoder.encode(JSON.stringify(canonical));
   if (payload.length > CONTENT_LIMIT) throw new Error("Message exceeds the 8 KiB chain limit");
   return payload;
 }
@@ -508,7 +510,7 @@ export class KudoraChain {
 
   async proposals() {
     const body = await fetchJson(`${this.config.cosmosRestUrl}/cosmos/gov/v1/proposals?pagination.limit=100&pagination.reverse=true`);
-    const proposals = (body.proposals || []).map((proposal) => ({ ...proposal, id: String(proposal.id || proposal.proposal_id) })).reverse();
+    const proposals = (body.proposals || []).map((proposal) => ({ ...proposal, id: String(proposal.id || proposal.proposal_id) }));
     return Promise.all(proposals.map(async (proposal) => {
       const response = await fetchJson(`${this.config.cosmosRestUrl}/cosmos/gov/v1/proposals/${proposal.id}/tally`).catch(() => ({}));
       return { ...proposal, tally: response.tally || proposal.final_tally_result };
@@ -516,7 +518,10 @@ export class KudoraChain {
   }
 
   async voteRecord(proposalId, cosmosAddress = this.cosmosAddress) {
-    return fetchJson(`${this.config.cosmosRestUrl}/cosmos/gov/v1/proposals/${proposalId}/votes/${cosmosAddress}`);
+    const body = await fetchJson(`${this.config.cosmosRestUrl}/cosmos/gov/v1/proposals/${proposalId}/votes?pagination.limit=100`);
+    const vote = (body.votes || []).find((entry) => entry.voter === cosmosAddress);
+    if (!vote) throw new Error("No vote recorded for this account");
+    return { vote };
   }
 
   discussionMessage(type, fields) {
@@ -531,7 +536,11 @@ export class KudoraChain {
   }
 
   async post(text, proposalId = 0, parentId = 0, quick = false) {
-    const content = contentBytes(text);
+    return this.postPayload({ v: 1, t: "text", text: text.trim() }, proposalId, parentId, quick);
+  }
+
+  async postPayload(payload, proposalId = 0, parentId = 0, quick = false) {
+    const content = contentBytes(payload);
     if (quick) {
       const session = await this.sessionAccount();
       return this.writeEvm({ account: session, address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "post", args: [BigInt(proposalId), BigInt(parentId), hexFromBytes(content)] });

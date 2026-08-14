@@ -648,6 +648,21 @@ function queuePatch() {
 
 document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeDrawer(); });
 window.addEventListener("popstate", () => location.pathname === "/reputation" ? activateReputation() : deactivateReputation());
-new MutationObserver(queuePatch).observe(document.documentElement, { childList: true, subtree: true });
-patchNavigation(); ensureRoot();
-if (location.pathname === "/reputation") activateReputation();
+
+async function startReputation() {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const root = document.querySelector(".app-shell");
+    if (root && Object.keys(root).some((key) => key.startsWith("__reactFiber") || key.startsWith("__reactProps") || key.startsWith("__reactContainer"))) break;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  const patchAfterInteraction = () => {
+    queuePatch();
+    setTimeout(queuePatch, 100);
+  };
+  document.addEventListener("click", patchAfterInteraction, true);
+  patchNavigation();
+  ensureRoot();
+  if (location.pathname === "/reputation") activateReputation();
+}
+
+startReputation();

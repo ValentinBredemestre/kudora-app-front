@@ -33,7 +33,8 @@ assert.match(rootHtml, /kudora-chain\.css/);
 assert.match(rootHtml, /kudora-chain\.js/);
 assert.match(rootHtml, /kudora-enhancements\.css/);
 assert.match(rootHtml, /kudora-enhancements\.js/);
-assert.doesNotMatch(rootHtml, /cdn-cgi|id="_R_"/);
+assert.match(rootHtml, /id="_R_"/);
+assert.doesNotMatch(rootHtml, /cdn-cgi/);
 
 for (const [pathname, contentType] of [
   ["/assets/kudora-chain.css", "text/css; charset=utf-8"],

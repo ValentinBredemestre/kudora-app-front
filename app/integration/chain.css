@@ -1,56 +1,104 @@
-.kc-page { display: grid; gap: 1.25rem; }
-.kc-wallet { padding: 1.25rem; display: grid; gap: 1rem; }
-.kc-wallet-heading { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
-.kc-wallet-heading h2, .kc-form-card h2, .kc-swap h2 { margin: .25rem 0 0; }
-.kc-wallet-options, .kc-tabs, .kc-votes { display: flex; flex-wrap: wrap; gap: .5rem; }
-.kc-wallet-options button, .kc-tabs button, .kc-votes button, .kc-session button, .kc-message-actions button {
-  border: 1px solid rgba(255,255,255,.14); background: rgba(7,12,22,.7); color: #dce7ef;
-  border-radius: 999px; padding: .65rem .9rem; cursor: pointer;
+.k-chain-status-output,
+.k-chain-copy-input {
+  position: fixed;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
-.kc-wallet-options button.active, .kc-tabs button.active { color: #071015; background: #62e9d9; border-color: #62e9d9; }
-.kc-account-select { display: flex; gap: .8rem; align-items: center; }
-.kc-account-select select { border: 1px solid rgba(255,255,255,.18); background: #09121c; color: white; padding: .6rem .8rem; border-radius: .5rem; }
-.kc-addresses { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
-.kc-addresses span { min-width: 0; background: rgba(0,0,0,.22); border-radius: .65rem; padding: .75rem; }
-.kc-addresses small { display: block; color: #62e9d9; margin-bottom: .35rem; }
-.kc-addresses code, .kc-swap code { display: block; overflow: hidden; text-overflow: ellipsis; font-size: .76rem; }
-.kc-grid, .kc-feature-layout { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 1rem; align-items: start; }
-.kc-balance-card, .kc-form-card, .kc-swap { padding: 1.25rem; }
-.kc-form-card form, .kc-swap form { display: grid; gap: .85rem; margin-top: 1rem; }
-.kc-form-card label, .kc-swap label { display: grid; gap: .35rem; color: #9caab5; font-size: .8rem; }
-.kc-form-card input, .kc-form-card textarea, .kc-swap input {
-  width: 100%; box-sizing: border-box; border: 1px solid rgba(255,255,255,.16); background: rgba(3,8,15,.7);
-  border-radius: .65rem; padding: .75rem; color: white; font: inherit;
+
+.k-chain-local-note {
+  margin-top: 24px;
 }
-.kc-form-card textarea { min-height: 5rem; resize: vertical; }
-.kc-check { grid-template-columns: auto 1fr !important; align-items: center; }
-.kc-check input { width: auto; }
-.kc-status { display: flex; align-items: center; gap: .7rem; padding: .8rem 1rem; border: 1px solid rgba(255,255,255,.12); border-radius: .65rem; background: rgba(7,12,22,.8); }
-.kc-status i { width: .6rem; height: .6rem; border-radius: 50%; background: #75828c; }
-.kc-status span { display: flex; flex-wrap: wrap; gap: .75rem; min-width: 0; }
-.kc-status code { overflow: hidden; text-overflow: ellipsis; color: #91a4b1; }
-.kc-status.awaiting i, .kc-status.pending i { background: #ffd56a; box-shadow: 0 0 12px #ffd56a; animation: kc-pulse 1s infinite; }
-.kc-status.confirmed i { background: #62e9d9; box-shadow: 0 0 12px #62e9d9; }
-.kc-status.failed { border-color: rgba(255,90,120,.4); color: #ff8fa5; }
-.kc-status.failed i { background: #ff5a78; }
-.kc-list { display: grid; gap: .8rem; max-height: 68rem; overflow: auto; }
-.kc-proposal, .kc-message, .kc-empty { padding: 1rem; }
-.kc-proposal header, .kc-message header { display: flex; justify-content: space-between; color: #62e9d9; font-size: .75rem; }
-.kc-proposal h3 { margin: .6rem 0 .35rem; }
-.kc-proposal p, .kc-message p { color: #c1ccd4; }
-.kc-proposal dl, .kc-swap dl { display: grid; gap: .4rem; }
-.kc-proposal dl div, .kc-swap dl div { display: grid; grid-template-columns: 6rem 1fr; gap: .5rem; }
-.kc-proposal dt, .kc-swap dt { color: #7d8e9a; }
-.kc-proposal dd, .kc-swap dd { margin: 0; }
-.kc-votes { margin-top: .8rem; }
-.kc-message header small { display: block; color: #82929d; margin-top: .25rem; }
-.kc-message-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .8rem; }
-.kc-session { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(255,255,255,.1); }
-.kc-session span { margin-right: auto; }
-.kc-session small, .kc-session b { display: block; }
-.kc-top-wallet { max-width: 19rem; overflow: hidden; text-overflow: ellipsis; }
-@keyframes kc-pulse { 50% { opacity: .35; } }
-@media (max-width: 850px) {
-  .kc-grid, .kc-feature-layout, .kc-addresses { grid-template-columns: 1fr; }
-  .kc-wallet-heading { align-items: flex-start; }
+
+.k-chain-local-tools {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .025);
+}
+
+.k-chain-local-tools > span,
+.k-chain-session-controls small {
+  color: #ff64ca;
+  font: 700 10px/1.2 var(--font-geist-mono, monospace);
+  letter-spacing: .14em;
+}
+
+.k-chain-local-tools > div,
+.k-chain-session-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.k-chain-local-tools button,
+.k-chain-session-controls button {
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 255, 255, .13);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .025);
+  color: inherit;
+}
+
+.k-chain-local-tools button.active {
+  border-color: #55ead8;
+  color: #55ead8;
+}
+
+.k-chain-empty-proposals,
+.k-chain-empty-discussion {
+  display: grid;
+  gap: 8px;
+  padding: 36px 22px;
+  color: rgba(255, 255, 255, .56);
+}
+
+.k-chain-empty-proposals strong,
+.k-chain-empty-discussion strong {
+  color: #f4f1f7;
+}
+
+.k-chain-proposal-state {
+  padding: 0 22px 16px;
+  color: rgba(255, 255, 255, .45);
+  font: 600 10px/1.4 var(--font-geist-mono, monospace);
+  letter-spacing: .08em;
+}
+
+.k-chain-session-controls {
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .025);
+}
+
+.k-chain-session-controls > span {
+  display: grid;
+  gap: 3px;
+  margin-right: auto;
+}
+
+.k-chain-session-controls strong,
+.k-chain-reply-context {
+  color: rgba(255, 255, 255, .72);
+  font-size: 12px;
+}
+
+.k-chain-reply-context {
+  display: block;
+  margin-bottom: 8px;
+  color: #55ead8;
+}
+
+.discussion-visual-card ol {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding-left: 22px;
 }

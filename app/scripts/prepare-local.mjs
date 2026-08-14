@@ -5,11 +5,16 @@ const htmlPath = resolve(import.meta.dirname, "../mirror-assets/index.html");
 let html = await readFile(htmlPath, "utf8");
 html = html
   .replace(/<script>\(function\(\)\{function c\(\).*?<\/script>/s, "")
-  .replace(/<script id="_R_">.*?<\/script>/s, "")
   .replaceAll("/assets/kudora-enhancements-20260812-v3.css", "/assets/kudora-enhancements.css")
   .replaceAll("/assets/kudora-enhancements-20260812-v3.js", "/assets/kudora-enhancements.js")
   .replaceAll("/assets/kudora-reputation-20260812-v5.css", "/assets/kudora-reputation.css")
   .replaceAll("/assets/kudora-reputation-20260812-v5.js", "/assets/kudora-reputation.js");
+if (!html.includes('id="_R_"')) {
+  html = html.replace(
+    '<script type="module" src="/assets/kudora-enhancements.js"></script>',
+    '<script id="_R_">import("/assets/index-B6cVLMYm.js")</script><script type="module" src="/assets/kudora-enhancements.js"></script>',
+  );
+}
 if (!html.includes("/assets/kudora-chain.js")) {
   html = html.replace(
     "</body>",

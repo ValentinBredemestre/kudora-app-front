@@ -45,7 +45,6 @@ for (const [pathname, source, contentType] of textAssets) {
   let body = await readFile(resolve(root, source), "utf8");
   if (source === "mirror-assets/index.html") {
     body = body.replace(/<script>\(function\(\)\{function c\(\).*?<\/script>/s, "");
-    body = body.replace(/<script id="_R_">.*?<\/script>/s, "");
     if (!body.includes("/assets/kudora-enhancements.css")) body = body.replace("</head>", '<link rel="stylesheet" href="/assets/kudora-enhancements.css"><link rel="stylesheet" href="/assets/kudora-reputation.css"></head>');
     if (!body.includes("/assets/kudora-chain.css")) body = body.replace("</head>", '<link rel="stylesheet" href="/assets/kudora-chain.css"></head>');
     if (!body.includes("/assets/kudora-enhancements.js")) body = body.replace("</body>", '<script type="module" src="/assets/kudora-enhancements.js"></script><script type="module" src="/assets/kudora-reputation.js"></script></body>');
