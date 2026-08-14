@@ -136,6 +136,92 @@ async function openDiscussion(page, proposalId) {
   await expect(page.getByTestId("discussion-form")).toBeVisible();
 }
 
+test("the original template exposes only live public data while disconnected", async ({ page }) => {
+  const started = Date.now();
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect.poll(() => page.locator(".validator-row:not(.validator-head):visible").count()).toBe(3);
+  expect(Date.now() - started).toBeLessThan(1_500);
+
+  await expect(page.locator(".desktop-nav")).not.toContainText("Discuss");
+  await expect(page.locator(".portfolio-grid")).toBeHidden();
+  await expect(page.locator(".network-ticker-group").first().locator(".network-metric")).toHaveCount(6);
+  for (const metric of await page.locator(".network-ticker-group").first().locator(".network-metric").all()) {
+    expect(await metric.evaluate((node) => getComputedStyle(node).borderRightWidth)).not.toBe("0px");
+  }
+
+  await navigate(page, "Choose");
+  await expect(page.locator(".validator-group-label:not(.available)")).toBeHidden();
+  await expect(page.locator(".validator-group-label.available")).toContainText("OTHER REPRESENTATIVES");
+  const rows = page.locator(".validator-row:not(.validator-head):visible");
+  await expect(rows).toHaveCount(3);
+  await expect(rows.first().locator(".supporters")).toContainText("people");
+  await expect(rows.first().locator(".uptime")).toContainText("%");
+  await expect(rows.first().getByRole("button")).toHaveText("Choose");
+  await expect(page.locator(".set-stat")).toContainText("ACTIVE TEAMS");
+  await expect(page.locator(".set-stat")).toContainText("3");
+  await expect(page.locator(".set-stat")).toContainText("% reliable");
+});
+
+test("MetaMask sign-in coalesces repeated clicks into one permission request", async ({ page }) => {
+  await page.addInitScript((address) => {
+    window.__metamaskRequests = [];
+    window.ethereum = {
+      request: async ({ method }) => {
+        window.__metamaskRequests.push(method);
+        if (method === "eth_accounts") return [];
+        if (method === "eth_requestAccounts") {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          return [address];
+        }
+        if (method === "wallet_switchEthereumChain") return null;
+        throw new Error(`Unexpected MetaMask request: ${method}`);
+      },
+    };
+  }, "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+  await openApp(page);
+  await page.getByRole("button", { name: /Connect wallet/i }).click();
+  await page.locator('[data-chain-connect="metamask"]').evaluate((button) => {
+    button.click();
+    button.click();
+  });
+  await expect.poll(() => page.evaluate(() => window.KudoraChain.walletMode)).toBe("metamask");
+  await expect.poll(() => page.evaluate(() => window.__metamaskRequests.filter((method) => method === "eth_requestAccounts").length)).toBe(1);
+});
+
+test("Choose and Vote retain the template semantics with on-chain personal data", async ({ page }) => {
+  await freshWallet(page, "MetaMask", "alice");
+  await navigate(page, "Choose");
+  await expect(page.locator(".portfolio-grid")).toBeVisible();
+  await expect(page.locator(".portfolio-placeholder")).toBeHidden();
+  await expect(page.locator(".validator-group-label:not(.available)")).toContainText("YOUR REPRESENTATIVES");
+  await expect(page.locator(".validator-group-label.available")).toContainText("OTHER REPRESENTATIVES");
+  await expect(page.locator(".validator-row.delegated:visible")).toHaveCount(1);
+  await expect(page.locator(".validator-row.delegated:visible").getByRole("button")).toHaveText("Add tokens");
+  await expect(page.locator(".active-vote-row:visible").first()).toContainText(/YES|NO|ABSTAIN/);
+  await page.locator(".active-vote-row:visible").first().click();
+  const activity = page.locator(".representative-activity-panel");
+  await expect(activity).toBeVisible();
+  await expect(activity).toContainText("REPRESENTATIVE ACTIVITY");
+  await expect(activity).toContainText("Kudora Validator 1");
+  await expect(activity.locator(".monitor-section-heading").first()).toContainText("1 representative");
+  await activity.locator(".monitor-representative-trigger:visible").first().click();
+  await expect(activity).toContainText("I voted");
+  await activity.locator('[aria-label*="Close"], .discussion-back').first().click();
+
+  await navigate(page, "Vote");
+  await expect(page.locator(".proposal-group:visible").nth(0).locator(":scope > header")).toContainText("YOUR ACTIVE VOTES");
+  await expect(page.locator(".proposal-group:visible").nth(0).locator(".proposal-list-item:visible")).toHaveCount(2);
+  const times = await page.locator(".proposal-list-item:visible .proposal-list-signal strong").allTextContents();
+  expect(new Set(times).size).toBeGreaterThan(1);
+  const mixed = await page.locator(".proposal-list-item:visible .proposal-result-legend").evaluateAll((legends) => legends.some((legend) => {
+    const values = [...legend.querySelectorAll("strong")].map((node) => Number.parseFloat(node.textContent));
+    return values.filter((value) => value > 0).length > 1;
+  }));
+  expect(mixed).toBe(true);
+  await expect(page.locator(".proposal-representative-peek:visible").first()).toContainText(/YES|NO|ABSTAIN|Not yet/);
+  await expect(page.locator("[data-chain-ask]:visible").first()).toHaveText("Ask");
+});
+
 test("the canonical Kudora UI drives real EVM and Cosmos business flows", async ({ page }) => {
   const local = await config();
   const errors = [];
@@ -267,20 +353,7 @@ test("the canonical Kudora UI drives real EVM and Cosmos business flows", async 
     expect(String(replyMessage.parent_id)).toBe(String(rootMessage.message_id));
   });
 
-  await test.step("the Discuss page contains only on-chain conversations", async () => {
-    await page.getByRole("button", { name: "Close all panels" }).click();
-    await navigate(page, "Discuss");
-    const topic = page.locator(`.topic-card[data-chain-proposal-id="${evmProposal.id}"]`);
-    await expect(topic).toBeVisible();
-    await topic.click();
-    await expect(page.locator("article.discussion h2")).toHaveText(evmProposal.title);
-    await expect(page.locator("article.discussion .comments-list > [data-chain-message-id]")).toHaveCount(2);
-    await expect(page.locator(".community-live")).toContainText("comments on chain");
-    await expect(page.locator(".topic-card:not([data-chain-proposal-id]):visible")).toHaveCount(0);
-  });
-
   await test.step("Useful, Not useful and removal keep one canonical reaction", async () => {
-    await openDiscussion(page, evmProposal.id);
     const card = page.getByTestId(`message-${rootMessage.message_id}`);
     await performTransaction(page, () => card.locator('[data-chain-reaction="1"]').click());
     expect(await reactions(evmProposal.id, rootMessage.message_id)).toHaveLength(1);

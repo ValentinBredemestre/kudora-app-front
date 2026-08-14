@@ -84,33 +84,10 @@
 body:not([data-chain-data-ready]) .network-metric,
 body:not([data-chain-data-ready]) .proposal-list-item,
 body:not([data-chain-data-ready]) .active-vote-row,
-body:not([data-chain-data-ready]) .portfolio-main,
-body:not([data-chain-data-ready]) .topic-card,
-body:not([data-chain-data-ready]) article.discussion,
-body:not([data-chain-data-ready]) .validator-row:not(.validator-head) {
+body:not([data-chain-validators-ready]) .validator-row:not(.validator-head) {
   visibility: hidden;
 }
 
-.network-live[data-chain-live] {
-  font-size: 0;
-}
-
-.network-live[data-chain-live]::after {
-  content: attr(data-chain-live);
-  font-size: 0.68rem;
-}
-
-.network-metric > small[data-chain-label],
-.network-metric > .network-rolling-value[data-chain-value] {
-  font-size: 0;
-}
-
-.network-metric > small[data-chain-label]::after {
-  content: attr(data-chain-label);
-  font-size: 0.62rem;
-}
-
-.network-metric > .network-rolling-value[data-chain-value]::after {
-  content: attr(data-chain-value);
-  font-size: 0.78rem;
+body:not([data-chain-wallet-connected]) .portfolio-grid {
+  display: none;
 }

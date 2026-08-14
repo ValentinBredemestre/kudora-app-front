@@ -218,6 +218,7 @@ function navButtonMarkup(mobile) {
 function patchNavigation() {
   document.querySelectorAll(".desktop-nav, .mobile-nav").forEach((nav) => {
     [...nav.querySelectorAll(":scope > button")].forEach((button) => {
+      if (/Discuss/i.test(button.textContent)) button.remove();
       if (!button.classList.contains("k-account-nav") && !button.dataset.accountExitBound) {
         button.dataset.accountExitBound = "true";
         button.addEventListener("click", deactivateAccount);

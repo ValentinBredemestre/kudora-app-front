@@ -1,4 +1,5 @@
 import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { bech32 } from "@scure/base";
 import {
   createPublicClient,
@@ -228,6 +229,10 @@ function evmFromCosmos(address) {
   return hexFromBytes(Uint8Array.from(bech32.fromWords(bech32.decode(address, false).words)));
 }
 
+function validatorConsensusAddress(publicKey) {
+  return bech32.encode("kudovalcons", bech32.toWords(sha256(bytesFromBase64(publicKey.key)).slice(0, 20)), false);
+}
+
 function contentBytes(content) {
   const canonical = typeof content === "string" ? { v: 1, t: "text", text: content.trim() } : content;
   if (!canonical || canonical.v !== 1 || !canonical.t) throw new Error("Discussion payload must have version 1 and a type");
@@ -270,6 +275,7 @@ export class KudoraChain {
     this.localWallets = null;
     this.evmAccount = null;
     this.cosmosAddress = null;
+    this.connecting = null;
   }
 
   static async load() {
@@ -291,6 +297,16 @@ export class KudoraChain {
   }
 
   async connect(mode, accountName = this.accountName) {
+    if (this.connecting) return this.connecting;
+    this.connecting = this.connectNow(mode, accountName);
+    try {
+      return await this.connecting;
+    } finally {
+      this.connecting = null;
+    }
+  }
+
+  async connectNow(mode, accountName) {
     this.walletMode = mode;
     this.accountName = accountName;
     if (mode.startsWith("local-")) {
@@ -301,8 +317,9 @@ export class KudoraChain {
       this.cosmosAddress = this.config.accounts[accountName].cosmosAddress;
     } else if (mode === "metamask") {
       if (!window.ethereum) throw new Error("MetaMask is not installed");
+      const existing = await window.ethereum.request({ method: "eth_accounts" });
+      const addresses = existing.length ? existing : await window.ethereum.request({ method: "eth_requestAccounts" });
       await this.ensureEvmChain(window.ethereum);
-      const addresses = await window.ethereum.request({ method: "eth_requestAccounts" });
       this.evmAccount = { address: addresses[0] };
       this.cosmosAddress = cosmosFromEvm(addresses[0]);
     } else if (mode === "keplr") {
@@ -553,23 +570,42 @@ export class KudoraChain {
     const requests = [
       fetchJson(`${this.config.cosmosRestUrl}/cosmos/staking/v1beta1/validators?status=BOND_STATUS_BONDED&pagination.limit=100`),
       fetchJson(`${this.config.cosmosRestUrl}/cosmos/staking/v1beta1/pool`),
+      fetchJson(`${this.config.cosmosRestUrl}/cosmos/slashing/v1beta1/signing_infos?pagination.limit=100`).catch(() => ({ info: [] })),
+      fetchJson(`${this.config.cosmosRestUrl}/cosmos/mint/v1beta1/inflation`).catch(() => ({ inflation: "0" })),
+      fetchJson(`${this.config.cosmosRestUrl}/cosmos/bank/v1beta1/supply/by_denom?denom=akud`).catch(() => ({ amount: { amount: "0" } })),
     ];
     if (this.cosmosAddress) requests.push(fetchJson(`${this.config.cosmosRestUrl}/cosmos/staking/v1beta1/delegations/${this.cosmosAddress}?pagination.limit=100`).catch(() => ({ delegation_responses: [] })));
-    const [validatorResponse, poolResponse, delegationResponse = { delegation_responses: [] }] = await Promise.all(requests);
+    const [validatorResponse, poolResponse, signingResponse, inflationResponse, supplyResponse, delegationResponse = { delegation_responses: [] }] = await Promise.all(requests);
     const bonded = BigInt(poolResponse.pool?.bonded_tokens || 0);
+    const supply = BigInt(supplyResponse.amount?.amount || 0);
+    const inflation = Number(inflationResponse.inflation || 0);
     const delegations = new Map((delegationResponse.delegation_responses || []).map((item) => [item.delegation.validator_address, item.balance?.amount || "0"]));
     const configured = new Map((this.config.validators || []).map((item) => [item.operatorAddress, item]));
-    return (validatorResponse.validators || []).map((validator, index) => {
+    const validators = await Promise.all((validatorResponse.validators || []).map(async (validator, index) => {
       const tokens = BigInt(validator.tokens || 0);
       const local = configured.get(validator.operator_address);
+      const consensusAddress = validatorConsensusAddress(validator.consensus_pubkey);
+      const signing = (signingResponse.info || []).find((item) => item.address === consensusAddress);
+      const blocks = Number(signing?.index_offset || 0);
+      const missed = Number(signing?.missed_blocks_counter || 0);
+      const commission = Number(validator.commission?.commission_rates?.rate || 0);
+      const delegationCount = await fetchJson(`${this.config.cosmosRestUrl}/cosmos/staking/v1beta1/validators/${validator.operator_address}/delegations?pagination.limit=1&pagination.count_total=true`)
+        .then((body) => Number(body.pagination?.total || 0))
+        .catch(() => 0);
       return {
         ...validator,
         name: local?.name || validator.description?.moniker || `Validator ${index + 1}`,
+        accountAddress: local?.accountAddress,
+        consensusAddress,
+        delegatorCount: delegationCount,
         delegationAkud: delegations.get(validator.operator_address) || "0",
         delegationKud: formatEther(BigInt(delegations.get(validator.operator_address) || 0)),
         powerPercent: bonded ? Number((tokens * 10_000n) / bonded) / 100 : 0,
+        reliabilityPercent: blocks ? ((blocks - missed) / blocks) * 100 : 100,
+        yearlyRewardsPercent: bonded ? inflation * (Number(supply) / Number(bonded)) * (1 - commission) * 100 : 0,
       };
-    }).sort((left, right) => Number(BigInt(right.tokens) - BigInt(left.tokens)));
+    }));
+    return validators.sort((left, right) => Number(BigInt(right.tokens) - BigInt(left.tokens)));
   }
 
   async rewards() {
@@ -593,16 +629,15 @@ export class KudoraChain {
     });
   }
 
-  async networkStats(proposals = []) {
-    const [status, txs, validators] = await Promise.all([
+  async networkStats(proposals = [], validatorCount) {
+    const [status, txs] = await Promise.all([
       this.rpc("status"),
       this.rpc("tx_search", { query: "tx.height > 0", prove: false, page: "1", per_page: "1", order_by: "desc" }),
-      this.validators(),
     ]);
     return {
       height: Number(status.sync_info?.latest_block_height || 0),
       transactions: Number(txs.total_count || 0),
-      validators: validators.length,
+      validators: validatorCount ?? (await this.validators()).length,
       completed: proposals.filter((proposal) => ["PROPOSAL_STATUS_PASSED", "PROPOSAL_STATUS_REJECTED", "PROPOSAL_STATUS_FAILED"].includes(proposal.status)).length,
       open: proposals.filter((proposal) => proposal.status === "PROPOSAL_STATUS_VOTING_PERIOD").length,
     };

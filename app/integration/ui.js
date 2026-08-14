@@ -123,6 +123,7 @@ function renderTopWallet() {
   const top = document.querySelector(".top-actions");
   if (!top) return;
   const current = account();
+  document.body.toggleAttribute("data-chain-wallet-connected", Boolean(current));
   const signature = current ? `${current.mode}:${current.evmAddress}` : "disconnected";
   top.dataset.chainWallet = "true";
   if (top.dataset.chainSignature === signature) return;
@@ -261,16 +262,22 @@ function patchNetworkStats() {
     ["DECISIONS COMPLETED", String(state.networkStats.completed)],
     ["OPEN DECISIONS", String(state.networkStats.open)],
   ];
-  document.querySelectorAll(".network-live").forEach((node) => { node.dataset.chainLive = "LIVE CHAIN"; });
+  document.querySelectorAll(".network-live").forEach((node) => {
+    const text = [...node.childNodes].find((child) => child.nodeType === Node.TEXT_NODE);
+    if (text) text.textContent = " LIVE CHAIN";
+  });
   document.querySelectorAll(".network-ticker-group").forEach((group) => {
     group.querySelectorAll(".network-metric").forEach((metric, index) => {
       const [label, value] = metrics[index] || ["ON CHAIN", "—"];
       const labelNode = metric.querySelector("small");
       const valueNode = metric.querySelector(".network-rolling-value");
-      if (labelNode) labelNode.dataset.chainLabel = label;
+      if (labelNode) labelNode.textContent = label;
       if (valueNode) {
-        valueNode.dataset.chainValue = value;
         valueNode.setAttribute("aria-label", value);
+        const characters = [...valueNode.querySelectorAll(":scope > .network-character")];
+        characters.forEach((character, characterIndex) => {
+          character.textContent = [...value][characterIndex] || "";
+        });
       }
     });
   });
@@ -281,26 +288,33 @@ function patchChoose() {
   if (!list || !state.validators.length) return;
   const connected = Boolean(account());
   const chosen = state.validators.filter((validator) => Number(validator.delegationKud) > 0);
+  const other = state.validators.filter((validator) => Number(validator.delegationKud) === 0);
   const portfolio = document.querySelector(".portfolio-main");
   if (portfolio) {
     const value = portfolio.querySelector(".portfolio-value strong");
     const label = portfolio.querySelector(".portfolio-value span");
     const detail = portfolio.querySelector(".portfolio-value small");
     const stats = portfolio.querySelectorAll(".portfolio-stats strong");
-    const openProposal = state.proposals.find((proposal) => proposal.status === "PROPOSAL_STATUS_VOTING_PERIOD");
-    if (value) value.textContent = connected ? String(chosen.length) : "—";
-    if (label) label.textContent = "VALIDATORS";
-    if (detail) detail.textContent = connected ? "chosen by you on chain" : "connect your wallet";
-    if (stats[0]) stats[0].textContent = connected ? `${formatKud(state.rewards)} KUD` : "—";
+    const openProposal = state.proposals
+      .filter((proposal) => proposal.status === "PROPOSAL_STATUS_VOTING_PERIOD")
+      .sort((left, right) => new Date(left.voting_end_time) - new Date(right.voting_end_time))[0];
+    if (value) value.textContent = String(chosen.length);
+    if (label) label.textContent = "REPRESENTATIVES";
+    if (detail) detail.textContent = "chosen by you";
+    if (stats[0]) stats[0].textContent = `${formatKud(state.rewards)} KUD`;
     if (stats[1]) stats[1].textContent = openProposal ? proposalTime(openProposal) : "No open vote";
     const note = portfolio.querySelector(".portfolio-placeholder");
-    if (note) note.textContent = connected ? "Live x/staking data" : "Connect your wallet to read your x/staking data";
+    if (note) note.hidden = true;
   }
 
-  const validatorAccounts = new Set((state.chain?.config.validators || []).map((validator) => validator.accountAddress));
-  const representativeProposals = state.proposals.filter((proposal) => (proposal.votes || []).some((vote) => validatorAccounts.has(vote.voter)));
+  const chosenAccounts = new Set(chosen.map((validator) => validator.accountAddress));
+  const representativeProposals = state.proposals
+    .filter((proposal) => (proposal.votes || []).some((vote) => chosenAccounts.has(vote.voter)))
+    .sort((left, right) => Number(right.id) - Number(left.id));
   const activeList = document.querySelector(".active-vote-list");
   if (activeList) {
+    const voice = activeList.closest(".voice-card");
+    if (voice) voice.hidden = !representativeProposals.length;
     const rows = [...activeList.querySelectorAll(".active-vote-row")];
     rows.forEach((row, index) => {
       const proposal = representativeProposals[index];
@@ -317,8 +331,20 @@ function patchChoose() {
       if (meta) meta.textContent = `KIP–${proposal.id} · ${proposalTime(proposal)}`;
       if (title) title.textContent = proposal.title;
       if (choices) {
-        choices.innerHTML = (proposal.votes || []).filter((vote) => validatorAccounts.has(vote.voter)).slice(0, 3)
-          .map((vote) => `<span class="active-voter-copyline"><strong>${escapeHtml(validatorNameForVote(vote.voter))}</strong><span class="vote-label">${escapeHtml(voteLabel(vote))}</span></span>`).join("");
+        const votes = (proposal.votes || []).filter((vote) => chosenAccounts.has(vote.voter));
+        [...choices.querySelectorAll(".active-voter")].forEach((voter, voterIndex) => {
+          const vote = votes[voterIndex];
+          voter.hidden = !vote;
+          if (!vote) return;
+          const name = voter.querySelector("strong");
+          const voteNode = voter.querySelector(".vote-label");
+          if (name) name.textContent = validatorNameForVote(vote.voter);
+          if (voteNode) {
+            const choice = voteLabel(vote);
+            voteNode.textContent = choice;
+            voteNode.className = `vote-label ${choice.toLowerCase().replaceAll(" ", "-")}`;
+          }
+        });
       }
     });
     const more = activeList.querySelector(".active-votes-load");
@@ -330,57 +356,155 @@ function patchChoose() {
     }
   }
 
-  const rows = [...list.querySelectorAll(".validator-row:not(.validator-head)")];
-  rows.forEach((row, index) => {
-    const validator = state.validators[index];
-    if (!validator) {
-      row.hidden = true;
-      delete row.dataset.chainValidator;
-      return;
-    }
-    row.hidden = false;
-    row.dataset.chainValidator = validator.operator_address;
-    row.classList.toggle("delegated", Number(validator.delegationKud) > 0);
-    row.setAttribute("aria-label", `Open ${validator.name}`);
-    const rank = row.querySelector(".rank");
-    const name = row.querySelector(".validator-name strong");
-    const detail = row.querySelector(".validator-name small");
-    const supporters = row.querySelector(".supporters");
-    const uptime = row.querySelector(".uptime");
-    const reward = row.querySelector(".positive");
-    const button = row.querySelector("button");
-    if (rank) rank.textContent = String(index + 1).padStart(2, "0");
-    if (name) name.firstChild.textContent = validator.name;
-    if (detail) detail.textContent = shortAddress(validator.operator_address);
-    if (supporters) supporters.textContent = `${validator.powerPercent.toFixed(1)}% voting power`;
-    if (uptime) uptime.textContent = validator.jailed ? "Jailed" : "Bonded";
-    if (reward) reward.textContent = `${formatKud(validator.delegationKud)} KUD`;
-    if (button) {
-      button.textContent = Number(validator.delegationKud) > 0 ? "Add tokens" : "Delegate";
-      button.dataset.chainDelegate = validator.operator_address;
-      button.className = Number(validator.delegationKud) > 0 ? "secondary-button small" : "outline-button small";
-    }
-  });
-  list.querySelectorAll(".validator-group-label, .validator-load-more").forEach((node) => { node.hidden = true; });
+  const labels = [...list.querySelectorAll(".validator-group-label")];
+  const yourLabel = labels.find((node) => !node.classList.contains("available"));
+  const otherLabel = labels.find((node) => node.classList.contains("available"));
+  const allRows = [...list.querySelectorAll(".validator-row:not(.validator-head)")];
+  const yourRows = allRows.filter((row) => yourLabel && otherLabel
+    && (yourLabel.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING)
+    && (row.compareDocumentPosition(otherLabel) & Node.DOCUMENT_POSITION_FOLLOWING));
+  const otherRows = allRows.filter((row) => otherLabel && (otherLabel.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING));
+
+  function patchRows(rows, validators, delegated) {
+    rows.forEach((row, index) => {
+      const validator = validators[index];
+      if (!validator) {
+        row.hidden = true;
+        delete row.dataset.chainValidator;
+        return;
+      }
+      row.hidden = false;
+      row.dataset.chainValidator = validator.operator_address;
+      row.classList.toggle("delegated", delegated);
+      row.setAttribute("aria-label", `Open ${validator.name}`);
+      const rank = row.querySelector(".rank");
+      const name = row.querySelector(".validator-name strong");
+      const detail = row.querySelector(".validator-name small");
+      const supporters = row.querySelector(".supporters");
+      const reliability = row.querySelector(".uptime");
+      const reward = row.querySelector(".positive");
+      const button = row.querySelector("button");
+      if (rank) rank.textContent = String(state.validators.indexOf(validator) + 1).padStart(2, "0");
+      if (name) name.firstChild.textContent = validator.name;
+      if (detail) detail.textContent = shortAddress(validator.operator_address);
+      if (supporters) supporters.textContent = `${Number(validator.delegatorCount || 0).toLocaleString("en-US")} people`;
+      if (reliability) reliability.textContent = `${Number(validator.reliabilityPercent || 0).toFixed(2)}%`;
+      if (reward) reward.textContent = `${Number(validator.yearlyRewardsPercent || 0).toFixed(1)}%`;
+      if (button) {
+        button.textContent = delegated ? "Add tokens" : "Choose";
+        button.dataset.chainDelegate = validator.operator_address;
+        button.className = delegated ? "secondary-button small" : "outline-button small";
+      }
+    });
+  }
+
+  patchRows(yourRows, connected ? chosen : [], true);
+  patchRows(otherRows, connected ? other : state.validators, false);
+  if (yourLabel) {
+    yourLabel.hidden = !connected || !chosen.length;
+    const count = yourLabel.querySelector("small");
+    if (count) count.textContent = `${chosen.length} chosen by you`;
+  }
+  if (otherLabel) otherLabel.hidden = connected ? !other.length : !state.validators.length;
+  list.querySelectorAll(".validator-load-more").forEach((node) => { node.hidden = true; });
   const stat = document.querySelector(".set-stat");
   if (stat) {
     const label = stat.querySelector("small");
     const total = stat.querySelector("strong");
     const status = stat.querySelector("span");
-    if (label) label.textContent = "BONDED VALIDATORS";
+    const reliability = state.validators.reduce((sum, validator) => sum + Number(validator.reliabilityPercent || 0), 0) / state.validators.length;
+    if (label) label.textContent = "ACTIVE TEAMS";
     if (total) total.textContent = String(state.validators.length);
-    if (status) status.innerHTML = `<i></i> ${state.validators.filter((validator) => !validator.jailed).length} active on chain`;
+    if (status) status.innerHTML = `<i></i> ${reliability.toFixed(1)}% reliable`;
   }
 }
 
-function openRepresentativeVotes(proposalId) {
-  const proposal = state.proposals.find((candidate) => candidate.id === proposalId);
-  if (!proposal) return;
-  const validatorAccounts = new Set((state.chain?.config.validators || []).map((validator) => validator.accountAddress));
-  const votes = (proposal.votes || []).filter((vote) => validatorAccounts.has(vote.voter));
-  openSidePanel(`
-    ${panelHeader(`KIP–${proposal.id} · ON-CHAIN VOTES`, proposal.title, proposal.summary)}
-    <div class="k-panel-body">${votes.map((vote) => `<section class="k-wallet-address-card"><div><span>BONDED VALIDATOR</span><strong>${escapeHtml(validatorNameForVote(vote.voter))}</strong><small>${escapeHtml(voteLabel(vote))} · read from x/gov</small></div></section>`).join("")}</div>`, "Validator votes");
+function patchRepresentativeActivity() {
+  const panel = document.querySelector(".representative-activity-panel");
+  const proposal = state.activeProposal;
+  if (!panel || !proposal) return;
+  const chosen = state.validators.filter((validator) => Number(validator.delegationKud) > 0);
+  const votes = chosen
+    .map((validator) => ({ validator, vote: (proposal.votes || []).find((entry) => entry.voter === validator.accountAddress) }))
+    .filter((entry) => entry.vote);
+  const header = panel.querySelector(".decision-panel-header");
+  const headerLabel = header?.querySelector("span");
+  const headerTitle = header?.querySelector("h2");
+  if (headerLabel) headerLabel.textContent = `KIP–${proposal.id} · REPRESENTATIVE ACTIVITY`;
+  if (headerTitle) headerTitle.textContent = proposal.title;
+
+  panel.querySelectorAll(".monitor-representative-grid > article").forEach((card, index) => {
+    const entry = votes[index];
+    card.hidden = !entry;
+    if (!entry) return;
+    const name = card.querySelector("strong");
+    const vote = card.querySelector(".vote-label");
+    if (name) name.textContent = entry.validator.name;
+    if (vote) {
+      const choice = voteLabel(entry.vote);
+      vote.textContent = choice;
+      vote.className = `vote-label ${choice.toLowerCase().replaceAll(" ", "-")}`;
+      vote.setAttribute("aria-label", `Voted ${choice}`);
+    }
+  });
+
+  const messages = visibleMessages(proposal.id);
+  const representativeSection = panel.querySelector(".monitor-comment-section:not(.community)");
+  const representativeCount = representativeSection?.querySelector(".monitor-section-heading small");
+  if (representativeCount) representativeCount.textContent = `${votes.length} representative${votes.length === 1 ? "" : "s"}`;
+  representativeSection?.querySelectorAll(".monitor-representative-group").forEach((group, index) => {
+    const entry = votes[index];
+    group.hidden = !entry;
+    if (!entry) return;
+    const validatorMessages = messages.filter((message) => message.cosmosAuthor === entry.validator.accountAddress);
+    const trigger = group.querySelector(".monitor-representative-trigger");
+    const name = trigger?.querySelector("strong");
+    const count = trigger?.querySelector("small");
+    const vote = trigger?.querySelector(".vote-label");
+    if (name) name.textContent = entry.validator.name;
+    if (count) count.textContent = `${validatorMessages.length} on-chain comment${validatorMessages.length === 1 ? "" : "s"}`;
+    if (vote) {
+      const choice = voteLabel(entry.vote);
+      vote.textContent = choice;
+      vote.className = `vote-label ${choice.toLowerCase().replaceAll(" ", "-")}`;
+      vote.setAttribute("aria-label", `Voted ${choice}`);
+    }
+    group.querySelectorAll(".monitor-group-comments .monitor-comment").forEach((comment, commentIndex) => {
+      const message = validatorMessages[commentIndex];
+      comment.hidden = !message;
+      if (!message) return;
+      const age = comment.querySelector("header strong");
+      const text = comment.querySelector("p");
+      const signal = comment.querySelector("div > span");
+      if (age) age.textContent = relativeTime(message.created_at);
+      if (text) text.textContent = message.parsed?.text || "On-chain contribution";
+      if (signal) signal.textContent = `◇ ${reactionState(proposal.id, message).useful} found this useful`;
+    });
+  });
+
+  const community = panel.querySelector(".monitor-comment-section.community");
+  if (community) {
+    const top = messages
+      .filter((message) => !["validator-comment", "representative-ask"].includes(message.parsed?.role))
+      .sort((left, right) => reactionState(proposal.id, right).useful - reactionState(proposal.id, left).useful);
+    community.querySelectorAll(".monitor-comment").forEach((comment, index) => {
+      const message = top[index];
+      comment.hidden = !message;
+      if (!message) return;
+      const name = comment.querySelector("header strong");
+      const age = comment.querySelector("header small");
+      const text = comment.querySelector("p");
+      const signal = comment.querySelector("div > span");
+      if (name) name.textContent = accountName(message.evmAuthor);
+      if (age) age.textContent = relativeTime(message.created_at);
+      if (text) text.textContent = message.parsed?.text || "On-chain contribution";
+      if (signal) signal.textContent = `◇ ${reactionState(proposal.id, message).useful} found this useful`;
+    });
+    const count = community.querySelector(".monitor-section-heading small");
+    if (count) count.textContent = `${messages.length} in the full discussion`;
+  }
+  const open = panel.querySelector(".monitor-open-discussion small");
+  if (open) open.textContent = String(messages.length);
 }
 
 function openValidatorPanel(validatorAddress) {
@@ -466,7 +590,12 @@ function patchResult(result, proposal) {
 }
 
 function proposalTime(proposal) {
-  const end = proposal.voting_end_time ? new Date(proposal.voting_end_time) : null;
+  const metadata = proposalMetadata(proposal);
+  const submitted = proposal.submit_time ? new Date(proposal.submit_time) : null;
+  const demoHours = Number(metadata.demoHours || 0);
+  const end = demoHours > 0 && submitted && !Number.isNaN(submitted.getTime())
+    ? new Date(submitted.getTime() + demoHours * 3_600_000)
+    : proposal.voting_end_time ? new Date(proposal.voting_end_time) : null;
   if (!end || Number.isNaN(end.getTime())) return String(proposal.status || "ON CHAIN").replace("PROPOSAL_STATUS_", "").replaceAll("_", " ");
   if (end.getTime() <= Date.now()) return String(proposal.status || "CLOSED").replace("PROPOSAL_STATUS_", "").replaceAll("_", " ");
   const hours = Math.max(0, Math.ceil((end.getTime() - Date.now()) / 3_600_000));
@@ -507,7 +636,17 @@ function patchProposalArticle(article, proposal) {
     time.querySelector("strong").textContent = proposalTime(proposal);
     time.querySelector("small").textContent = "on chain";
   }
-  article.querySelector(".personal-choice")?.setAttribute("hidden", "");
+  const personal = article.querySelector(".personal-choice");
+  const ownVote = account() ? (proposal.votes || []).find((vote) => vote.voter === account().cosmosAddress) : null;
+  if (personal) {
+    personal.hidden = !ownVote;
+    const choice = personal.querySelector(".vote-label");
+    if (choice && ownVote) {
+      const label = voteLabel(ownVote);
+      choice.textContent = label;
+      choice.className = `vote-label ${label.toLowerCase().replaceAll(" ", "-")}`;
+    }
+  }
   patchResult(article.querySelector(".proposal-result"), proposal);
   const engagement = article.querySelector(".proposal-engagement");
   if (engagement) {
@@ -519,11 +658,38 @@ function patchProposalArticle(article, proposal) {
   }
   const peek = article.querySelector(".proposal-representative-peek");
   if (peek) {
-    const representativeVotes = (proposal.votes || []).filter((vote) => (state.chain?.config.validators || []).some((validator) => validator.accountAddress === vote.voter));
-    peek.hidden = !representativeVotes.length;
-    if (representativeVotes.length) {
-      peek.innerHTML = `<span>REPRESENTATIVES TOOK PART</span><div>${representativeVotes.slice(0, 3).map((vote) => `<strong>${escapeHtml(validatorNameForVote(vote.voter))} <small>${escapeHtml(voteLabel(vote))}</small></strong>`).join("")}</div>`;
-    }
+    const chosen = state.validators.filter((validator) => Number(validator.delegationKud) > 0);
+    peek.hidden = !account() || !chosen.length;
+    const label = peek.querySelector(".peek-label");
+    if (label) label.textContent = "YOUR REPRESENTATIVES";
+    peek.querySelectorAll(".peek-representative").forEach((item, index) => {
+      const validator = chosen[index];
+      item.hidden = !validator;
+      if (!validator) return;
+      const vote = (proposal.votes || []).find((entry) => entry.voter === validator.accountAddress);
+      const name = item.querySelector("strong");
+      const voteNode = item.querySelector(".vote-label");
+      if (name) name.textContent = validator.name;
+      if (voteNode) {
+        const choice = vote ? voteLabel(vote) : "Not yet";
+        voteNode.textContent = choice;
+        voteNode.className = `vote-label ${choice.toLowerCase().replaceAll(" ", "-")}`;
+      }
+      let ask = item.querySelector(".peek-ask");
+      if (!vote && !ask) {
+        ask = document.createElement("button");
+        ask.type = "button";
+        ask.className = "peek-ask";
+        item.append(ask);
+      }
+      if (ask) {
+        ask.hidden = Boolean(vote);
+        ask.textContent = "Ask";
+        ask.dataset.chainAsk = validator.operator_address;
+        ask.dataset.chainProposalId = proposal.id;
+        ask.setAttribute("aria-label", `Ask ${validator.name} to vote`);
+      }
+    });
   }
   let actions = article.querySelector(":scope > .k-proposal-actions");
   if (!actions) {
@@ -559,11 +725,19 @@ function patchProposalSurface() {
     ["MOST DISCUSSED", "Completed decisions with the richest discussion", "most-discussed"],
   ];
   const grouped = Object.fromEntries(labels.map(([, , key]) => [key, []]));
+  const current = account();
+  const chosenAccounts = new Set(state.validators.filter((validator) => Number(validator.delegationKud) > 0).map((validator) => validator.accountAddress));
   for (const proposal of state.proposals) {
-    let group = proposalMetadata(proposal).group;
-    if (!grouped[group]) group = proposal.status === "PROPOSAL_STATUS_VOTING_PERIOD" ? "closing" : "most-discussed";
+    const openProposal = proposal.status === "PROPOSAL_STATUS_VOTING_PERIOD";
+    const ownVote = current && (proposal.votes || []).some((vote) => vote.voter === current.cosmosAddress);
+    const representativeVote = (proposal.votes || []).some((vote) => chosenAccounts.has(vote.voter));
+    const group = openProposal && ownVote ? "active"
+      : openProposal && representativeVote ? "representatives"
+        : openProposal ? "closing" : "most-discussed";
     grouped[group].push(proposal);
   }
+  grouped.closing.sort((left, right) => proposalTime(left).localeCompare(proposalTime(right), undefined, { numeric: true }));
+  grouped["most-discussed"].sort((left, right) => visibleMessages(right.id).length - visibleMessages(left.id).length);
   feed.querySelectorAll(".proposal-group").forEach((group, index) => {
     const [labelText, hintText, key] = labels[index] || labels.at(-1);
     const proposals = grouped[key];
@@ -626,104 +800,7 @@ async function loadAllDiscussions() {
     await Promise.all(ids.slice(offset, offset + 6).map((id) => loadDiscussion(id, false, true)));
   }
   patchProposalSurface();
-  patchCommunitySurface();
   patchNetworkStats();
-}
-
-function patchCommunitySurface() {
-  const layout = document.querySelector(".community-layout");
-  if (!layout) return;
-  const conversations = state.proposals
-    .filter((proposal) => visibleMessages(proposal.id).length)
-    .sort((left, right) => visibleMessages(right.id).length - visibleMessages(left.id).length);
-  const cards = [...layout.querySelectorAll(".topic-card")];
-  cards.forEach((card, index) => {
-    const proposal = conversations[index];
-    if (!proposal) {
-      card.hidden = true;
-      delete card.dataset.chainProposalId;
-      return;
-    }
-    card.hidden = false;
-    card.dataset.chainProposalId = proposal.id;
-    const messages = visibleMessages(proposal.id);
-    const first = messages[0];
-    const metadata = card.querySelectorAll(".topic-meta span");
-    if (metadata[0]) metadata[0].textContent = `DECISION KIP–${proposal.id}`;
-    if (metadata[1]) metadata[1].textContent = first ? relativeTime(first.created_at) : "on chain";
-    const title = card.querySelector("h3");
-    const excerpt = card.querySelector("p");
-    if (title) title.textContent = proposal.title;
-    if (excerpt) excerpt.textContent = first?.parsed?.text || proposal.summary;
-    const author = card.querySelector(".topic-author");
-    if (author && first) author.lastChild.textContent = accountName(first.evmAuthor);
-    const linked = card.querySelector(".topic-footer em");
-    if (linked) linked.textContent = `KIP–${proposal.id}`;
-    const counts = card.querySelectorAll(".topic-counts b");
-    const signals = messages.reduce((total, message) => total + reactionState(proposal.id, message).reactions.length, 0);
-    if (counts[0]) counts[0].textContent = `⌁ ${messages.length}`;
-    if (counts[1]) counts[1].textContent = `◇ ${signals}`;
-  });
-
-  const heading = layout.querySelector(".section-mini-heading span:first-child");
-  if (heading) heading.textContent = `${conversations.length} ON-CHAIN CONVERSATIONS`;
-  const live = layout.querySelector(".community-live");
-  if (live) live.innerHTML = `<i></i> ${[...state.messages.values()].reduce((total, messages) => total + messages.filter((message) => message.parsed?.role !== "proposal").length, 0)} comments on chain`;
-
-  const activeCard = cards.find((card) => card.classList.contains("active") && card.dataset.chainProposalId) || cards.find((card) => card.dataset.chainProposalId);
-  const proposal = state.proposals.find((candidate) => candidate.id === activeCard?.dataset.chainProposalId);
-  const discussion = layout.querySelector("article.discussion");
-  if (!proposal || !discussion) return;
-  state.activeProposal = proposal;
-  const messages = visibleMessages(proposal.id);
-  const first = messages[0];
-  const head = discussion.querySelector(".discussion-head");
-  const metadata = head?.querySelectorAll(".topic-meta span") || [];
-  if (metadata[0]) metadata[0].textContent = `DECISION KIP–${proposal.id}`;
-  if (metadata[1]) metadata[1].textContent = first ? relativeTime(first.created_at) : "on chain";
-  const title = head?.querySelector("h2");
-  const excerpt = head?.querySelector(":scope > p");
-  if (title) title.textContent = proposal.title;
-  if (excerpt) excerpt.textContent = proposal.summary;
-  const authorName = head?.querySelector(".discussion-author strong");
-  const authorRole = head?.querySelector(".discussion-author small");
-  if (authorName) authorName.textContent = first ? accountName(first.evmAuthor) : shortAddress(proposal.proposer || "on chain");
-  if (authorRole) authorRole.textContent = "On-chain contributor";
-  const linked = head?.querySelector(".discussion-author button");
-  if (linked) linked.hidden = true;
-
-  const anchor = proposalAnchor(proposal.id);
-  const reactions = anchor ? reactionState(proposal.id, anchor) : { useful: 0, notUseful: 0 };
-  const reactionBar = head?.querySelector(".neon-reactions");
-  if (reactionBar && anchor) {
-    reactionBar.dataset.chainMessageId = anchor.messageId;
-    const buttons = reactionBar.querySelectorAll("button");
-    if (buttons[0]) {
-      buttons[0].dataset.chainProposalReaction = "1";
-      buttons[0].innerHTML = `<span>◇</span> Useful <b>${reactions.useful}</b>`;
-    }
-    if (buttons[1]) {
-      buttons[1].dataset.chainProposalReaction = "2";
-      buttons[1].innerHTML = `<span>×</span> Not useful <b>${reactions.notUseful}</b>`;
-    }
-    if (buttons[2]) {
-      buttons[2].dataset.chainProposalZap = "true";
-      buttons[2].innerHTML = "<span>ϟ</span> Zap <b>KUD</b>";
-    }
-  }
-  const commentsHead = discussion.querySelector(".comments-head span");
-  if (commentsHead) commentsHead.textContent = `${messages.length} ON-CHAIN COMMENTS`;
-  const comments = discussion.querySelector(".comments-list");
-  if (comments) comments.innerHTML = messages.map((message) => renderMessage(proposal.id, message)).join("");
-  const form = discussion.querySelector(".comment-composer");
-  if (form) {
-    form.dataset.chainCommunityForm = "true";
-    form.dataset.chainProposalId = proposal.id;
-    const textarea = form.querySelector("textarea");
-    if (textarea) textarea.placeholder = "Add an on-chain fact, question or point of view…";
-    const note = form.querySelector(".composer-bottom span");
-    if (note) note.textContent = "Published on Kudora.";
-  }
 }
 
 function findSection(panel, label) {
@@ -747,7 +824,7 @@ async function patchVoteRecord(panel, proposal) {
 
 function patchProposalDetail() {
   const proposal = state.activeProposal;
-  const panel = document.querySelector(".decision-panel:not(.proposal-composer-panel)");
+  const panel = document.querySelector(".decision-panel:not(.proposal-composer-panel):not(.representative-activity-panel)");
   if (!proposal || !panel) return;
   panel.dataset.chainProposalId = proposal.id;
   panel.dataset.testid = `proposal-detail-${proposal.id}`;
@@ -935,7 +1012,7 @@ function renderMessage(proposalId, message) {
 
 function patchDiscussionPreview() {
   const proposal = state.activeProposal;
-  const panel = document.querySelector(".decision-panel:not(.proposal-composer-panel)");
+  const panel = document.querySelector(".decision-panel:not(.proposal-composer-panel):not(.representative-activity-panel)");
   if (!proposal || !panel) return;
   const section = findSection(panel, "STRONGEST COMMUNITY ARGUMENTS");
   if (!section) return;
@@ -1094,18 +1171,27 @@ async function onClick(event) {
     if (!account()) return openConnectPanel();
     return openValidatorPanel(validatorAction.dataset.chainDelegate || validatorAction.dataset.chainValidator);
   }
+  const ask = target.closest("[data-chain-ask]");
+  if (ask) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (!account()) return openConnectPanel();
+    const validator = state.validators.find((candidate) => candidate.operator_address === ask.dataset.chainAsk);
+    if (!validator) return;
+    await transact("Representative vote request", () => state.chain.postPayload({
+      v: 1,
+      t: "text",
+      role: "representative-ask",
+      validator: validator.operator_address,
+      text: `Please review KIP–${ask.dataset.chainProposalId} and publish your vote.`,
+    }, ask.dataset.chainProposalId));
+    await loadDiscussion(ask.dataset.chainProposalId, true);
+    window.KudoraHumanUI?.showToast(`Asked ${validator.name} to vote`);
+    return;
+  }
   const representativeVote = target.closest(".active-vote-row[data-chain-proposal-id]");
   if (representativeVote) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    return openRepresentativeVotes(representativeVote.dataset.chainProposalId);
-  }
-  const communityTopic = target.closest(".topic-card[data-chain-proposal-id]");
-  if (communityTopic) state.activeProposal = state.proposals.find((proposal) => proposal.id === communityTopic.dataset.chainProposalId) || null;
-  if (target.closest(".community-toolbar > .primary-button")) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    return window.KudoraHumanUI?.showToast("Open a decision to start its on-chain discussion");
+    state.activeProposal = state.proposals.find((proposal) => proposal.id === representativeVote.dataset.chainProposalId) || null;
   }
   const article = target.closest(".proposal-list-item[data-chain-proposal-id]");
   if (article) state.activeProposal = state.proposals.find((proposal) => proposal.id === article.dataset.chainProposalId) || null;
@@ -1191,22 +1277,6 @@ async function onClick(event) {
 async function onSubmit(event) {
   const form = event.target;
   if (!(form instanceof HTMLFormElement)) return;
-  if (form.matches("[data-chain-community-form]")) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    if (!account()) return openConnectPanel();
-    const textarea = form.querySelector("textarea");
-    const text = textarea?.value.trim() || "";
-    if (!text) throw new Error("Message content is required");
-    await transact("Discussion post", () => state.chain.postPayload({ v: 1, t: "text", text }, form.dataset.chainProposalId));
-    if (textarea) {
-      textarea.value = "";
-      textarea.dispatchEvent(new Event("input", { bubbles: true }));
-    }
-    await loadDiscussion(form.dataset.chainProposalId, true);
-    patchCommunitySurface();
-    return;
-  }
   if (form.matches('[data-money-form="send"]')) {
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -1311,7 +1381,7 @@ function patchAll() {
     patchChoose();
     patchNetworkStats();
     patchProposalSurface();
-    patchCommunitySurface();
+    patchRepresentativeActivity();
     patchProposalDetail();
     patchVotePanel();
     patchDiscussionPanel();
@@ -1365,11 +1435,29 @@ async function start() {
     };
     setStatus("idle", "Ready");
     renderTopWallet();
-    await loadProposals();
-    [state.validators, state.networkStats] = await Promise.all([
-      state.chain.validators(),
-      state.chain.networkStats(state.proposals),
+    state.validators = (state.chain.config.validators || []).map((validator) => ({
+      ...validator,
+      operator_address: validator.operatorAddress,
+      accountAddress: validator.accountAddress,
+      delegationAkud: "0",
+      delegationKud: "0",
+      delegatorCount: 0,
+      jailed: false,
+      powerPercent: Number(validator.powerPercent || 0),
+      reliabilityPercent: 100,
+      yearlyRewardsPercent: 0,
+      tokens: "0",
+    }));
+    document.body.dataset.chainValidatorsReady = "true";
+    patchChoose();
+    await Promise.all([
+      loadProposals(),
+      state.chain.validators().then((validators) => {
+        state.validators = validators;
+        patchChoose();
+      }),
     ]);
+    state.networkStats = await state.chain.networkStats(state.proposals, state.validators.length);
     document.body.dataset.chainDataReady = "true";
     patchAll();
     await loadAllDiscussions();
