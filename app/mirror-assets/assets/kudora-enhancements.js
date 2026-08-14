@@ -17,15 +17,15 @@ function loadState() {
   }
 }
 
-const state = loadState();
+const state = { ...loadState(), transactions: [] };
 let accountFilter = "All";
 let accountSearch = "";
 let transactionLimit = 3;
-let accountActive = true;
+let accountActive = false;
 let patchQueued = false;
 
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ reactions: state.reactions, walletConnected: state.walletConnected }));
 }
 
 function escapeHtml(value) {
@@ -218,8 +218,6 @@ function navButtonMarkup(mobile) {
 function patchNavigation() {
   document.querySelectorAll(".desktop-nav, .mobile-nav").forEach((nav) => {
     [...nav.querySelectorAll(":scope > button")].forEach((button) => {
-      const label = button.textContent.trim();
-      if (/Discuss/i.test(label)) button.remove();
       if (!button.classList.contains("k-account-nav") && !button.dataset.accountExitBound) {
         button.dataset.accountExitBound = "true";
         button.addEventListener("click", deactivateAccount);
@@ -701,9 +699,12 @@ window.KudoraHumanUI = {
   showToast,
   closePanel,
   patch: patchAll,
+  setTransactions(transactions) {
+    state.transactions = [...transactions];
+    renderTransactions();
+  },
   recordTransaction(transaction) {
     state.transactions.unshift(transaction);
-    saveState();
     renderTransactions();
   },
 };

@@ -32,6 +32,14 @@ async function reactions(proposalId, messageId) {
   return (await json(`${REST}/kudora/discussion/v1/reactions/${proposalId}/${messageId}?pagination.limit=100`)).reactions || [];
 }
 
+async function delegation(delegator, validator) {
+  const response = await fetch(`${REST}/cosmos/staking/v1beta1/validators/${validator}/delegations/${delegator}`);
+  if (response.status === 404) return 0n;
+  const body = await response.json();
+  if (!response.ok) throw new Error(`${response.status}: ${JSON.stringify(body)}`);
+  return BigInt(body.delegation_response?.balance?.amount || 0);
+}
+
 async function rpc(method, params) {
   const body = await json(EVM, {
     method: "POST",
@@ -136,6 +144,7 @@ test("the canonical Kudora UI drives real EVM and Cosmos business flows", async 
 
   await test.step("the supplied product design is intact and one wallet has both tags", async () => {
     await freshWallet(page, "MetaMask");
+    await navigate(page, "Account");
     await expect(page.locator("body")).toContainText("Everything in one place.");
     await expect(page.getByText("Local MetaMask", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Local Keplr", { exact: true })).toHaveCount(0);
@@ -145,6 +154,19 @@ test("the canonical Kudora UI drives real EVM and Cosmos business flows", async 
     const decoded = Uint8Array.from(bech32.fromWords(bech32.decode(cosmosAddress, false).words));
     expect(`0x${Buffer.from(decoded).toString("hex")}`.toLowerCase()).toBe(evmAddress.toLowerCase());
     expect(await bankBalance(cosmosAddress)).toBeGreaterThan(0n);
+  });
+
+  await test.step("MetaMask delegates real KUD to one of the three bonded validators", async () => {
+    await freshWallet(page, "MetaMask", "alice");
+    const validator = local.validators[0].operatorAddress;
+    const before = await delegation(local.accounts.alice.cosmosAddress, validator);
+    const row = page.locator(`.validator-row[data-chain-validator="${validator}"]`);
+    await expect(row).toBeVisible();
+    await row.locator("button").click();
+    const form = page.locator("[data-chain-delegate-form]");
+    await form.locator("input[name='amount']").fill("0.01");
+    await performTransaction(page, () => form.locator("button[type='submit']").click());
+    expect(await delegation(local.accounts.alice.cosmosAddress, validator) - before).toBe(KUD / 100n);
   });
 
   await test.step("MetaMask sends native KUD from the original Send money panel", async () => {
@@ -245,7 +267,20 @@ test("the canonical Kudora UI drives real EVM and Cosmos business flows", async 
     expect(String(replyMessage.parent_id)).toBe(String(rootMessage.message_id));
   });
 
+  await test.step("the Discuss page contains only on-chain conversations", async () => {
+    await page.getByRole("button", { name: "Close all panels" }).click();
+    await navigate(page, "Discuss");
+    const topic = page.locator(`.topic-card[data-chain-proposal-id="${evmProposal.id}"]`);
+    await expect(topic).toBeVisible();
+    await topic.click();
+    await expect(page.locator("article.discussion h2")).toHaveText(evmProposal.title);
+    await expect(page.locator("article.discussion .comments-list > [data-chain-message-id]")).toHaveCount(2);
+    await expect(page.locator(".community-live")).toContainText("comments on chain");
+    await expect(page.locator(".topic-card:not([data-chain-proposal-id]):visible")).toHaveCount(0);
+  });
+
   await test.step("Useful, Not useful and removal keep one canonical reaction", async () => {
+    await openDiscussion(page, evmProposal.id);
     const card = page.getByTestId(`message-${rootMessage.message_id}`);
     await performTransaction(page, () => card.locator('[data-chain-reaction="1"]').click());
     expect(await reactions(evmProposal.id, rootMessage.message_id)).toHaveLength(1);

@@ -42,6 +42,10 @@ const tokenAbi = [
   { type: "function", name: "balanceOf", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] },
 ];
 
+const stakingAbi = [
+  { type: "function", name: "delegate", stateMutability: "nonpayable", inputs: [{ name: "delegatorAddress", type: "address" }, { name: "validatorAddress", type: "string" }, { name: "amount", type: "uint256" }], outputs: [{ name: "success", type: "bool" }] },
+];
+
 function bytesFromHex(value) {
   const clean = value.replace(/^0x/, "");
   if (clean.length % 2) throw new Error("Invalid hexadecimal value");
@@ -133,6 +137,10 @@ function encodeMsgSend(from, to, amount) {
 
 function encodeMsgVote(voter, proposalId, option) {
   return new Proto().uint(1, proposalId).string(2, voter).uint(3, option).finish();
+}
+
+function encodeMsgDelegate(delegator, validator, amount) {
+  return new Proto().string(1, delegator).string(2, validator).message(3, encodeCoin(amount)).finish();
 }
 
 function encodeUpdateDiscussionParams(authority, postFee) {
@@ -382,6 +390,14 @@ export class KudoraChain {
     return { akud: evm, kud: formatEther(evm), mockUsdc };
   }
 
+  async rpc(method, params = {}) {
+    const url = new URL(`${this.config.cosmosRpcUrl}/${method}`);
+    Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, JSON.stringify(value)));
+    const body = await fetchJson(url);
+    if (body.error) throw new Error(body.error.message || `RPC ${method} failed`);
+    return body.result;
+  }
+
   async cosmosAccount() {
     const response = await fetchJson(`${this.config.cosmosRestUrl}/cosmos/auth/v1beta1/accounts/${this.cosmosAddress}`);
     return { accountNumber: BigInt(findScalar(response.account, "account_number") || 0), sequence: BigInt(findScalar(response.account, "sequence") || 0) };
@@ -484,7 +500,7 @@ export class KudoraChain {
       });
       const tx = await this.broadcastCosmos([{ typeUrl: "/cosmos.gov.v1.MsgSubmitProposal", value }], "Kudora proposal");
       const proposals = await this.proposals();
-      return { ...tx, proposalId: proposals.at(-1)?.id };
+      return { ...tx, proposalId: proposals.at(0)?.id };
     }
     const tx = await this.writeEvm({
       address: this.config.governancePrecompileAddress,
@@ -509,12 +525,135 @@ export class KudoraChain {
   }
 
   async proposals() {
-    const body = await fetchJson(`${this.config.cosmosRestUrl}/cosmos/gov/v1/proposals?pagination.limit=100&pagination.reverse=true`);
+    const [body, pool] = await Promise.all([
+      fetchJson(`${this.config.cosmosRestUrl}/cosmos/gov/v1/proposals?pagination.limit=100&pagination.reverse=true`),
+      fetchJson(`${this.config.cosmosRestUrl}/cosmos/staking/v1beta1/pool`).catch(() => ({ pool: {} })),
+    ]);
     const proposals = (body.proposals || []).map((proposal) => ({ ...proposal, id: String(proposal.id || proposal.proposal_id) }));
     return Promise.all(proposals.map(async (proposal) => {
-      const response = await fetchJson(`${this.config.cosmosRestUrl}/cosmos/gov/v1/proposals/${proposal.id}/tally`).catch(() => ({}));
-      return { ...proposal, tally: response.tally || proposal.final_tally_result };
+      const [response, voteResponse] = await Promise.all([
+        fetchJson(`${this.config.cosmosRestUrl}/cosmos/gov/v1/proposals/${proposal.id}/tally`).catch(() => ({})),
+        fetchJson(`${this.config.cosmosRestUrl}/cosmos/gov/v1/proposals/${proposal.id}/votes?pagination.limit=100`).catch(() => ({ votes: [] })),
+      ]);
+      const tally = response.tally || proposal.final_tally_result || {};
+      const votingPower = ["yes_count", "no_count", "abstain_count", "no_with_veto_count"]
+        .reduce((sum, key) => sum + BigInt(tally[key] || 0), 0n);
+      const bonded = BigInt(pool.pool?.bonded_tokens || 0);
+      return {
+        ...proposal,
+        tally,
+        votes: voteResponse.votes || [],
+        participantCount: (voteResponse.votes || []).length,
+        participationPercent: bonded ? Number((votingPower * 10_000n) / bonded) / 100 : 0,
+      };
     }));
+  }
+
+  async validators() {
+    const requests = [
+      fetchJson(`${this.config.cosmosRestUrl}/cosmos/staking/v1beta1/validators?status=BOND_STATUS_BONDED&pagination.limit=100`),
+      fetchJson(`${this.config.cosmosRestUrl}/cosmos/staking/v1beta1/pool`),
+    ];
+    if (this.cosmosAddress) requests.push(fetchJson(`${this.config.cosmosRestUrl}/cosmos/staking/v1beta1/delegations/${this.cosmosAddress}?pagination.limit=100`).catch(() => ({ delegation_responses: [] })));
+    const [validatorResponse, poolResponse, delegationResponse = { delegation_responses: [] }] = await Promise.all(requests);
+    const bonded = BigInt(poolResponse.pool?.bonded_tokens || 0);
+    const delegations = new Map((delegationResponse.delegation_responses || []).map((item) => [item.delegation.validator_address, item.balance?.amount || "0"]));
+    const configured = new Map((this.config.validators || []).map((item) => [item.operatorAddress, item]));
+    return (validatorResponse.validators || []).map((validator, index) => {
+      const tokens = BigInt(validator.tokens || 0);
+      const local = configured.get(validator.operator_address);
+      return {
+        ...validator,
+        name: local?.name || validator.description?.moniker || `Validator ${index + 1}`,
+        delegationAkud: delegations.get(validator.operator_address) || "0",
+        delegationKud: formatEther(BigInt(delegations.get(validator.operator_address) || 0)),
+        powerPercent: bonded ? Number((tokens * 10_000n) / bonded) / 100 : 0,
+      };
+    }).sort((left, right) => Number(BigInt(right.tokens) - BigInt(left.tokens)));
+  }
+
+  async rewards() {
+    if (!this.cosmosAddress) return "0";
+    const body = await fetchJson(`${this.config.cosmosRestUrl}/cosmos/distribution/v1beta1/delegators/${this.cosmosAddress}/rewards`).catch(() => ({ total: [] }));
+    const amount = (body.total || []).filter((coin) => coin.denom === "akud").reduce((sum, coin) => sum + Number(coin.amount || 0), 0);
+    return String(amount / 1e18);
+  }
+
+  async delegate(validatorAddress, amount) {
+    const value = parseEther(String(amount));
+    if (value <= 0n) throw new Error("Amount must be positive");
+    if (this.isKeplr()) {
+      return this.broadcastCosmos([{ typeUrl: "/cosmos.staking.v1beta1.MsgDelegate", value: encodeMsgDelegate(this.cosmosAddress, validatorAddress, value) }], "Kudora delegation");
+    }
+    return this.writeEvm({
+      address: "0x0000000000000000000000000000000000000800",
+      abi: stakingAbi,
+      functionName: "delegate",
+      args: [this.evmAccount.address, validatorAddress, value],
+    });
+  }
+
+  async networkStats(proposals = []) {
+    const [status, txs, validators] = await Promise.all([
+      this.rpc("status"),
+      this.rpc("tx_search", { query: "tx.height > 0", prove: false, page: "1", per_page: "1", order_by: "desc" }),
+      this.validators(),
+    ]);
+    return {
+      height: Number(status.sync_info?.latest_block_height || 0),
+      transactions: Number(txs.total_count || 0),
+      validators: validators.length,
+      completed: proposals.filter((proposal) => ["PROPOSAL_STATUS_PASSED", "PROPOSAL_STATUS_REJECTED", "PROPOSAL_STATUS_FAILED"].includes(proposal.status)).length,
+      open: proposals.filter((proposal) => proposal.status === "PROPOSAL_STATUS_VOTING_PERIOD").length,
+    };
+  }
+
+  async transactions() {
+    if (!this.cosmosAddress) return [];
+    const queries = [`message.sender='${this.cosmosAddress}'`, `transfer.recipient='${this.cosmosAddress}'`];
+    const results = await Promise.all(queries.map((query) => this.rpc("tx_search", { query, prove: false, page: "1", per_page: "100", order_by: "desc" }).catch(() => ({ txs: [] }))));
+    const byHash = new Map();
+    for (const result of results) for (const tx of result.txs || []) byHash.set(tx.hash, tx);
+    return [...byHash.values()].sort((left, right) => Number(right.height) - Number(left.height)).map((tx) => {
+      const events = tx.tx_result?.events || [];
+      const values = (type, key) => events.filter((event) => event.type === type).flatMap((event) => event.attributes || []).filter((attribute) => attribute.key === key).map((attribute) => attribute.value);
+      const action = values("message", "action").at(-1) || "Transaction";
+      const senders = values("transfer", "sender");
+      const recipients = values("transfer", "recipient");
+      const amounts = values("transfer", "amount");
+      let amount = 0;
+      for (let index = 0; index < amounts.length; index += 1) {
+        const match = amounts[index].match(/^([0-9]+)akud$/);
+        if (!match) continue;
+        const kud = Number(formatEther(BigInt(match[1])));
+        if (recipients[index] === this.cosmosAddress) amount += kud;
+        if (senders[index] === this.cosmosAddress) amount -= kud;
+      }
+      const details = {
+        "/cosmos.bank.v1beta1.MsgSend": [amount >= 0 ? "Received" : "Sent", amount >= 0 ? "Money received" : "Money sent", amount >= 0 ? "↓" : "↑"],
+        "/cosmos.gov.v1.MsgSubmitProposal": ["Community", "Proposal published", "◇"],
+        "/cosmos.gov.v1.MsgVote": ["Community", "Governance vote", "✓"],
+        "/cosmos.staking.v1beta1.MsgDelegate": ["Community", "Delegated to a validator", "◎"],
+        "/kudora.discussion.v1.MsgPost": ["Community", "Discussion contribution", "⌁"],
+        "/kudora.discussion.v1.MsgReact": ["Community", "Community reaction", "◇"],
+        "/kudora.discussion.v1.MsgZap": ["Community", "Community Zap", "ϟ"],
+        "/cosmos.evm.vm.v1.MsgEthereumTx": [amount >= 0 ? "Received" : "Sent", "EVM transaction", "◆"],
+      }[action] || ["Community", action.split(".").at(-1).replace(/^Msg/, ""), "◆"];
+      const fee = values("tx", "fee")[0]?.match(/^([0-9]+)akud$/)?.[1] || "0";
+      return {
+        id: tx.hash,
+        hash: tx.hash,
+        category: details[0],
+        title: details[1],
+        icon: details[2],
+        note: `Block #${tx.height} · ${tx.hash.slice(0, 10)}…`,
+        date: `Block #${tx.height}`,
+        amount,
+        fee: Number(formatEther(BigInt(fee))),
+        status: "Confirmed",
+        explanation: `Confirmed on Kudora in block #${tx.height}. Transaction ${tx.hash}.`,
+      };
+    });
   }
 
   async voteRecord(proposalId, cosmosAddress = this.cosmosAddress) {
