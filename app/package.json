@@ -1,0 +1,20 @@
+{
+  "name": "kudora-chain-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "npm run integration:build && node scripts/generate-mirror.mjs && bash scripts/build.sh",
+    "integration:build": "esbuild integration/ui.js --bundle --format=esm --minify --outfile=mirror-assets/assets/kudora-chain.js && esbuild integration/chain.css --bundle --minify --outfile=mirror-assets/assets/kudora-chain.css && node scripts/prepare-local.mjs",
+    "e2e": "playwright test",
+    "validate": "node scripts/validate-artifact.mjs"
+  },
+  "dependencies": {
+    "@noble/curves": "2.0.0",
+    "@scure/base": "2.0.0",
+    "viem": "2.37.6"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.55.0",
+    "esbuild": "0.25.9"
+  }
+}
