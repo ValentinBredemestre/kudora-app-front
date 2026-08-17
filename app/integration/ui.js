@@ -135,7 +135,7 @@ function renderTopWallet() {
         <span><small>CONNECTED ACCOUNT</small><strong>${escapeHtml(shortAddress(current.evmAddress))}</strong></span>
       </button>
       <button type="button" class="k-top-copy" data-chain-copy="evm" aria-label="Copy EVM tag" title="Copy EVM tag"><span aria-hidden="true">⧉</span> Copy</button>
-    </div>` : '<button type="button" class="wallet-button" data-chain-open-connect><span class="glyph" aria-hidden="true">⌁</span> Connect wallet</button>';
+    </div>` : '<button type="button" class="wallet-button" data-chain-open-connect>Connect wallet</button>';
 }
 
 function openConnectPanel() {
@@ -143,8 +143,8 @@ function openConnectPanel() {
     ${panelHeader("SIGN IN", "Connect a wallet", "Choose the wallet you already use")}
     <div class="k-panel-body">
       <div class="wallet-grid wallet-grid-simple wallet-panel-options">
-        <button type="button" data-chain-connect="keplr"><span><strong>Keplr</strong></span><span class="glyph">→</span></button>
-        <button type="button" data-chain-connect="metamask"><span><strong>MetaMask</strong></span><span class="glyph">→</span></button>
+        <button type="button" data-chain-connect="keplr"><span class="k-wallet-choice"><img src="/wallet-keplr.svg" alt="" class="k-wallet-choice-logo"><span><strong>Keplr</strong><small>Cosmos wallet</small></span></span><span class="glyph">→</span></button>
+        <button type="button" data-chain-connect="metamask"><span class="k-wallet-choice"><img src="/wallet-metamask.svg" alt="" class="k-wallet-choice-logo"><span><strong>MetaMask</strong><small>Ethereum wallet</small></span></span><span class="glyph">→</span></button>
       </div>
     </div>`, "Connect a wallet");
 }
@@ -163,7 +163,7 @@ function openConnectedPanel() {
 
 async function connectWallet(kind, accountName = state.chain.accountName || "alice") {
   const useLocal = kind.startsWith("local-")
-    || (kind === "metamask" && !window.ethereum)
+    || (kind === "metamask" && !window.ethereum && !state.chain.currentMetaMaskProvider())
     || (kind === "keplr" && !window.keplr);
   const mode = kind.startsWith("local-") ? kind : useLocal ? `local-${kind}` : kind;
   await transact(`Connect ${kind.replace("local-", "")}`, () => state.chain.connect(mode, accountName).then(() => ({ hash: "" })));
@@ -177,6 +177,7 @@ async function connectWallet(kind, accountName = state.chain.accountName || "ali
 function disconnectWallet() {
   state.chain.walletMode = null;
   state.chain.evmAccount = null;
+  state.chain.ethereumProvider = null;
   state.chain.cosmosAddress = null;
   state.balances = null;
   closeSidePanel();

@@ -149,6 +149,16 @@ test("the original template exposes only live public data while disconnected", a
     expect(await metric.evaluate((node) => getComputedStyle(node).borderRightWidth)).not.toBe("0px");
   }
 
+  const connectButton = page.getByRole("button", { name: /Connect wallet/i });
+  await expect(connectButton.locator(".glyph")).toHaveCount(0);
+  await expect.poll(() => connectButton.evaluate((node) => getComputedStyle(node).animationName)).toContain("k-wallet-attention");
+  await connectButton.click();
+  const walletLogos = page.locator(".wallet-panel-options .k-wallet-choice-logo");
+  await expect(walletLogos).toHaveCount(2);
+  await expect.poll(() => walletLogos.evaluateAll((images) => images.every((image) => image.complete && image.naturalWidth > 0))).toBe(true);
+  await expect(await page.request.get("/kudora-token.png")).toBeOK();
+  await page.locator(".k-side-panel [data-chain-close-panel]").click();
+
   await navigate(page, "Choose");
   await expect(page.locator(".validator-group-label:not(.available)")).toBeHidden();
   await expect(page.locator(".validator-group-label.available")).toContainText("OTHER REPRESENTATIVES");
@@ -162,12 +172,24 @@ test("the original template exposes only live public data while disconnected", a
   await expect(page.locator(".set-stat")).toContainText("% reliable");
 });
 
-test("MetaMask sign-in coalesces repeated clicks into one permission request", async ({ page }) => {
+test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", async ({ page }) => {
   await page.addInitScript((address) => {
-    window.__metamaskRequests = [];
-    window.ethereum = {
+    window.__walletRequests = { brave: [], metamask: [] };
+    const braveProvider = {
+      isBraveWallet: true,
+      isMetaMask: true,
       request: async ({ method }) => {
-        window.__metamaskRequests.push(method);
+        window.__walletRequests.brave.push(method);
+        if (method === "eth_accounts") return [];
+        if (method === "eth_requestAccounts") return ["0x0000000000000000000000000000000000000001"];
+        if (method === "wallet_switchEthereumChain") return null;
+        throw new Error(`Unexpected Brave Wallet request: ${method}`);
+      },
+    };
+    const metaMaskProvider = {
+      isMetaMask: true,
+      request: async ({ method }) => {
+        window.__walletRequests.metamask.push(method);
         if (method === "eth_accounts") return [];
         if (method === "eth_requestAccounts") {
           await new Promise((resolve) => setTimeout(resolve, 100));
@@ -177,6 +199,31 @@ test("MetaMask sign-in coalesces repeated clicks into one permission request", a
         throw new Error(`Unexpected MetaMask request: ${method}`);
       },
     };
+    window.ethereum = braveProvider;
+    window.addEventListener("eip6963:requestProvider", () => {
+      window.dispatchEvent(new CustomEvent("eip6963:announceProvider", {
+        detail: {
+          info: {
+            uuid: "350670db-19fa-4704-a166-e52e178b59d2",
+            name: "Brave Wallet",
+            icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>",
+            rdns: "com.brave.wallet",
+          },
+          provider: braveProvider,
+        },
+      }));
+      window.dispatchEvent(new CustomEvent("eip6963:announceProvider", {
+        detail: {
+          info: {
+            uuid: "7677b54f-3486-46e2-4e37-bf8747814f42",
+            name: "MetaMask",
+            icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>",
+            rdns: "io.metamask",
+          },
+          provider: metaMaskProvider,
+        },
+      }));
+    });
   }, "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
   await openApp(page);
   await page.getByRole("button", { name: /Connect wallet/i }).click();
@@ -185,7 +232,8 @@ test("MetaMask sign-in coalesces repeated clicks into one permission request", a
     button.click();
   });
   await expect.poll(() => page.evaluate(() => window.KudoraChain.walletMode)).toBe("metamask");
-  await expect.poll(() => page.evaluate(() => window.__metamaskRequests.filter((method) => method === "eth_requestAccounts").length)).toBe(1);
+  await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_requestAccounts").length)).toBe(1);
+  await expect.poll(() => page.evaluate(() => window.__walletRequests.brave.length)).toBe(0);
 });
 
 test("Choose and Vote retain the template semantics with on-chain personal data", async ({ page }) => {

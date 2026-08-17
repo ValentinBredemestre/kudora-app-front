@@ -274,8 +274,17 @@ export class KudoraChain {
     this.accountName = "alice";
     this.localWallets = null;
     this.evmAccount = null;
+    this.ethereumProvider = null;
+    this.ethereumProviders = new Map();
     this.cosmosAddress = null;
     this.connecting = null;
+    window.addEventListener("eip6963:announceProvider", (event) => {
+      const detail = event.detail;
+      if (detail?.info?.uuid && detail.provider?.request) {
+        this.ethereumProviders.set(detail.info.uuid, detail);
+      }
+    });
+    this.requestEthereumProviders();
   }
 
   static async load() {
@@ -316,10 +325,11 @@ export class KudoraChain {
       this.evmAccount = privateKeyToAccount(privateKey);
       this.cosmosAddress = this.config.accounts[accountName].cosmosAddress;
     } else if (mode === "metamask") {
-      if (!window.ethereum) throw new Error("MetaMask is not installed");
-      const existing = await window.ethereum.request({ method: "eth_accounts" });
-      const addresses = existing.length ? existing : await window.ethereum.request({ method: "eth_requestAccounts" });
-      await this.ensureEvmChain(window.ethereum);
+      const provider = await this.metaMaskProvider();
+      const existing = await provider.request({ method: "eth_accounts" });
+      const addresses = existing.length ? existing : await provider.request({ method: "eth_requestAccounts" });
+      await this.ensureEvmChain(provider);
+      this.ethereumProvider = provider;
       this.evmAccount = { address: addresses[0] };
       this.cosmosAddress = cosmosFromEvm(addresses[0]);
     } else if (mode === "keplr") {
@@ -345,6 +355,35 @@ export class KudoraChain {
     };
   }
 
+  requestEthereumProviders() {
+    window.dispatchEvent(new Event("eip6963:requestProvider"));
+  }
+
+  currentMetaMaskProvider() {
+    const announced = [...this.ethereumProviders.values()].find(({ info }) => (
+      info.rdns === "io.metamask" || /^metamask$/i.test(info.name)
+    ));
+    if (announced) return announced.provider;
+
+    const injected = Array.isArray(window.ethereum?.providers)
+      ? window.ethereum.providers
+      : [window.ethereum].filter(Boolean);
+    return injected.find((provider) => provider.isMetaMask && !provider.isBraveWallet) || null;
+  }
+
+  async metaMaskProvider() {
+    let provider = this.currentMetaMaskProvider();
+    if (provider) return provider;
+
+    this.requestEthereumProviders();
+    for (let attempt = 0; attempt < 10 && !provider; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      provider = this.currentMetaMaskProvider();
+    }
+    if (!provider) throw new Error("MetaMask is not installed or is not available on this site");
+    return provider;
+  }
+
   async ensureEvmChain(provider) {
     const chainId = `0x${Number(this.config.evmChainId).toString(16)}`;
     try {
@@ -358,15 +397,18 @@ export class KudoraChain {
           chainName: "Kudora",
           nativeCurrency: { name: "KUD", symbol: "KUD", decimals: 18 },
           rpcUrls: [this.config.evmRpcUrl],
+          iconUrls: [new URL("/kudora-token.png", location.origin).href],
         }],
       });
     }
   }
 
   async suggestKeplrChain() {
+    const coinImageUrl = new URL("/kudora-token.png", location.origin).href;
     await window.keplr.experimentalSuggestChain({
       chainId: this.config.cosmosChainId,
       chainName: "Kudora",
+      chainSymbolImageUrl: coinImageUrl,
       rpc: this.config.cosmosRpcUrl,
       rest: this.config.cosmosRestUrl,
       bip44: { coinType: 60 },
@@ -375,9 +417,9 @@ export class KudoraChain {
         bech32PrefixValAddr: "kudovaloper", bech32PrefixValPub: "kudovaloperpub",
         bech32PrefixConsAddr: "kudovalcons", bech32PrefixConsPub: "kudovalconspub",
       },
-      currencies: [{ coinDenom: "KUD", coinMinimalDenom: "akud", coinDecimals: 18 }],
-      feeCurrencies: [{ coinDenom: "KUD", coinMinimalDenom: "akud", coinDecimals: 18, gasPriceStep: { low: 0.0000000001, average: 0.000000001, high: 0.000000002 } }],
-      stakeCurrency: { coinDenom: "KUD", coinMinimalDenom: "akud", coinDecimals: 18 },
+      currencies: [{ coinDenom: "KUD", coinMinimalDenom: "akud", coinDecimals: 18, coinImageUrl }],
+      feeCurrencies: [{ coinDenom: "KUD", coinMinimalDenom: "akud", coinDecimals: 18, coinImageUrl, gasPriceStep: { low: 0.0000000001, average: 0.000000001, high: 0.000000002 } }],
+      stakeCurrency: { coinDenom: "KUD", coinMinimalDenom: "akud", coinDecimals: 18, coinImageUrl },
       features: ["eth-address-gen", "eth-key-sign"],
     });
   }
@@ -385,7 +427,7 @@ export class KudoraChain {
   async evmWallet(accountOverride) {
     if (accountOverride) return createWalletClient({ account: accountOverride, chain: this.chain, transport: http(this.config.evmRpcUrl) });
     if (this.isLocal()) return createWalletClient({ account: this.evmAccount, chain: this.chain, transport: http(this.config.evmRpcUrl) });
-    if (this.walletMode === "metamask") return createWalletClient({ account: this.evmAccount.address, chain: this.chain, transport: custom(window.ethereum) });
+    if (this.walletMode === "metamask") return createWalletClient({ account: this.evmAccount.address, chain: this.chain, transport: custom(this.ethereumProvider) });
     if (this.walletMode === "keplr") {
       const provider = window.keplr.ethereum || await window.keplr.getEthereumProvider?.();
       if (!provider?.request) throw new Error("This Keplr version does not expose its official EVM provider");

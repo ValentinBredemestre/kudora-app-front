@@ -243,7 +243,7 @@ function patchNavigation() {
 
 function topWalletMarkup() {
   if (!state.walletConnected) {
-    return `<button type="button" class="wallet-button k-reconnect-wallet"><span class="glyph" aria-hidden="true">⌁</span> Connect wallet</button>`;
+    return `<button type="button" class="wallet-button k-reconnect-wallet">Connect wallet</button>`;
   }
   return `
     <div class="k-top-wallet">
