@@ -339,8 +339,9 @@ export class KudoraChain {
       this.cosmosAddress = this.config.accounts[accountName].cosmosAddress;
     } else if (mode === "metamask") {
       const provider = await this.metaMaskProvider();
-      const existing = await provider.request({ method: "eth_accounts" });
-      const addresses = existing.length ? existing : await provider.request({ method: "eth_requestAccounts" });
+      // Request access immediately. Asking for passive accounts first can move
+      // the real prompt outside the user's click and some wallets then ignore it.
+      const addresses = await provider.request({ method: "eth_requestAccounts" });
       await this.ensureEvmChain(provider);
       this.ethereumProvider = provider;
       this.evmAccount = { address: addresses[0] };
@@ -437,10 +438,16 @@ export class KudoraChain {
     });
   }
 
-  async evmWallet(accountOverride) {
+  evmWalletNow(accountOverride) {
     if (accountOverride) return createWalletClient({ account: accountOverride, chain: this.chain, transport: http(this.config.evmRpcUrl) });
     if (this.isLocal()) return createWalletClient({ account: this.evmAccount, chain: this.chain, transport: http(this.config.evmRpcUrl) });
     if (this.walletMode === "metamask") return createWalletClient({ account: this.evmAccount.address, chain: this.chain, transport: custom(this.ethereumProvider) });
+    return null;
+  }
+
+  async evmWallet(accountOverride) {
+    const wallet = this.evmWalletNow(accountOverride);
+    if (wallet) return wallet;
     if (this.walletMode === "keplr") {
       const provider = window.keplr.ethereum || await window.keplr.getEthereumProvider?.();
       if (!provider?.request) throw new Error("This Keplr version does not expose its official EVM provider");
@@ -525,8 +532,10 @@ export class KudoraChain {
   }
 
   async writeEvm({ address, abi, functionName, args = [], value = 0n, account }) {
-    const wallet = await this.evmWallet(account);
-    const hash = await wallet.writeContract({ address, abi, functionName, args, value, gas: 2_000_000n, gasPrice: GAS_PRICE });
+    const immediateWallet = this.evmWalletNow(account);
+    const wallet = immediateWallet || await this.evmWallet(account);
+    const hashRequest = wallet.writeContract({ address, abi, functionName, args, value, gas: 2_000_000n, gasPrice: GAS_PRICE });
+    const hash = await hashRequest;
     const receipt = await this.publicClient.waitForTransactionReceipt({ hash, timeout: 60_000 });
     if (receipt.status !== "success") throw new Error(`EVM transaction ${hash} reverted`);
     return { hash, receipt, path: "evm" };
@@ -540,8 +549,10 @@ export class KudoraChain {
       return this.broadcastCosmos([{ typeUrl: "/cosmos.bank.v1beta1.MsgSend", value: encodeMsgSend(this.cosmosAddress, target, value) }], "Kudora KUD transfer");
     }
     const target = recipient.startsWith("kudo1") ? evmFromCosmos(recipient) : recipient;
-    const wallet = await this.evmWallet();
-    const hash = await wallet.sendTransaction({ to: target, value, gas: 21_000n, gasPrice: GAS_PRICE });
+    const immediateWallet = this.evmWalletNow();
+    const wallet = immediateWallet || await this.evmWallet();
+    const hashRequest = wallet.sendTransaction({ to: target, value, gas: 21_000n, gasPrice: GAS_PRICE });
+    const hash = await hashRequest;
     const receipt = await this.publicClient.waitForTransactionReceipt({ hash, timeout: 60_000 });
     if (receipt.status !== "success") throw new Error(`EVM transaction ${hash} reverted`);
     return { hash, receipt, path: "evm" };

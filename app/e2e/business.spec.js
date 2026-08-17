@@ -78,6 +78,7 @@ async function connect(page, family, accountName = "alice") {
   await panel.getByRole("button", { name: new RegExp(`^${family}`) }).click();
   const expectedMode = `local-${family.toLowerCase()}`;
   await expect.poll(() => page.evaluate(() => window.KudoraChain.walletMode)).toBe(expectedMode);
+  await expect.poll(() => page.evaluate(() => window.KudoraChain.connecting === null)).toBe(true);
 
   if (accountName !== "alice") {
     await page.evaluate(({ mode, name }) => window.KudoraChainBridge.connect(mode, name), {
@@ -203,6 +204,12 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
           return [address];
         }
         if (method === "wallet_switchEthereumChain") return null;
+        if (method === "eth_chainId") return "0x1d4c1";
+        if (method === "eth_sendTransaction") {
+          window.__walletActivation = navigator.userActivation?.isActive;
+          await new Promise((resolve) => setTimeout(resolve, 80));
+          return `0x${"1".repeat(64)}`;
+        }
         throw new Error(`Unexpected MetaMask request: ${method}`);
       },
     };
@@ -241,6 +248,20 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
   await expect.poll(() => page.evaluate(() => window.KudoraChain.walletMode)).toBe("metamask");
   await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_requestAccounts").length)).toBe(1);
   await expect.poll(() => page.evaluate(() => window.__walletRequests.brave.length)).toBe(0);
+
+  await page.evaluate(() => {
+    window.KudoraChain.publicClient.waitForTransactionReceipt = async ({ hash }) => ({ status: "success", transactionHash: hash, logs: [] });
+  });
+  await navigate(page, "Vote");
+  await page.locator(".proposal-list-item:visible").first().click();
+  const vote = page.locator("[data-chain-switch-vote]:not([disabled])").first();
+  await expect(vote).toBeVisible();
+  await vote.click();
+  await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(1);
+  await expect.poll(() => page.evaluate(() => window.__walletActivation)).toBe(true);
+  await expect(page.locator("#kudora-chain-notification")).toHaveAttribute("data-state", "confirmed");
+  await expect(page.locator("#kudora-chain-notification")).toContainText("Done");
+  await expect(page.locator("body")).not.toContainText("Submitted · waiting for chain confirmation");
 });
 
 test("seeded account activity contains real rewards, payments, moves and zaps", async ({ page }) => {
@@ -351,6 +372,9 @@ test("Choose and Vote retain the template semantics with on-chain personal data"
   const oldestFirst = await page.locator(".proposal-group:visible").first().locator(".proposal-list-item:visible").first().getAttribute("data-chain-proposal-id");
   expect(oldestFirst).not.toBe(newestFirst);
   await expect(page.locator(".proposal-group:visible").nth(0).locator(":scope > header")).toContainText("YOUR ACTIVE VOTES");
+  await expect(page.locator(".proposal-feed")).toContainText("WAITING FOR YOUR VOTE");
+  await expect(page.locator(".proposal-feed")).toContainText("PAST PROPOSALS");
+  await expect(page.locator(".proposal-feed")).not.toContainText("YOUR REPRESENTATIVES TOOK PART");
   expect(await page.locator(".proposal-group:visible").nth(0).locator(".proposal-list-item:visible").count()).toBeGreaterThanOrEqual(2);
   const times = await page.locator(".proposal-list-item:visible .proposal-list-signal strong").allTextContents();
   expect(new Set(times).size).toBeGreaterThan(1);
@@ -398,6 +422,22 @@ test("the discussion composer keeps every control on a clear full-width row", as
   expect(quickBox.height).toBeLessThan(90);
   expect(quickBox.y).toBeLessThan(toolsBox.y);
   expect(toolsBox.y).toBeLessThan(inputBox.y);
+
+  await expect(tools.getByRole("button", { name: "Create visual" })).toBeVisible();
+  await tools.getByRole("button", { name: "Create visual" }).click();
+  const visualBuilder = page.getByTestId("visual-builder");
+  await expect(visualBuilder).toBeVisible();
+  await expect(visualBuilder.locator(".k-chain-slide-list > div")).toHaveCount(4);
+  await expect(visualBuilder.locator(".k-chain-slide-list")).toContainText("Text");
+  await expect(visualBuilder.locator(".k-chain-slide-list")).toContainText("Roadmap");
+  await expect(visualBuilder.locator(".k-chain-slide-list")).toContainText("Budget");
+  await expect(visualBuilder.locator(".k-chain-slide-list")).toContainText("Poll");
+
+  const publishedVisual = page.locator("[data-chain-visual]").first();
+  await expect(publishedVisual).toBeVisible();
+  await expect(publishedVisual.locator("[data-chain-visual-tab]")).toHaveCount(4);
+  await publishedVisual.getByRole("button", { name: /Poll/ }).click();
+  await expect(publishedVisual.locator(".k-visual-poll:visible")).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
   const [mobilePanelBox, mobileQuickBox] = await Promise.all([
