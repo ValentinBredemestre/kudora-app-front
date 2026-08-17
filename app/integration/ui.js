@@ -19,6 +19,7 @@ const state = {
   rewards: "0",
   networkStats: null,
   activeProposal: null,
+  activeValidatorAddress: null,
   balances: null,
   messages: new Map(),
   reactions: new Map(),
@@ -45,7 +46,8 @@ function accountName(address = account()?.evmAddress) {
   if (!address || !state.chain) return "Wallet";
   const match = Object.entries(state.chain.config.accounts || {})
     .find(([, candidate]) => candidate.evmAddress.toLowerCase() === address.toLowerCase());
-  return match ? `${match[0][0].toUpperCase()}${match[0].slice(1)}` : shortAddress(address);
+  if (match) return `${match[0][0].toUpperCase()}${match[0].slice(1)}`;
+  return (state.chain.config.validators || []).find((validator) => validator.evmAddress?.toLowerCase() === address.toLowerCase())?.name || shortAddress(address);
 }
 
 function ensureStatusOutput() {
@@ -557,6 +559,137 @@ function patchRepresentativeActivity() {
   if (open) open.textContent = String(messages.length);
 }
 
+function profileMessages() {
+  return [...state.messages.entries()].flatMap(([proposalId, messages]) => messages
+    .filter((message) => message.parsed?.text && message.parsed?.role !== "proposal")
+    .map((message) => ({ ...message, proposalId })));
+}
+
+function topProfileMessages(messages) {
+  const unique = new Map();
+  for (const message of messages) {
+    const text = message.parsed.text.trim();
+    const current = unique.get(text);
+    const useful = reactionState(message.proposalId, message).useful;
+    if (!current || useful > reactionState(current.proposalId, current).useful) unique.set(text, message);
+  }
+  return [...unique.values()].sort((left, right) => {
+    const useful = reactionState(right.proposalId, right).useful - reactionState(left.proposalId, left).useful;
+    return useful || Number(right.created_at) - Number(left.created_at);
+  });
+}
+
+function profileCommentsMarkup(messages, emptyCopy) {
+  if (!messages.length) return `<p class="k-profile-empty">${escapeHtml(emptyCopy)}</p>`;
+  return messages.map((message) => {
+    const useful = reactionState(message.proposalId, message).useful;
+    return `<blockquote class="progressive-reveal k-profile-comment"><header><strong>${escapeHtml(accountName(message.evmAuthor))}</strong><small>${escapeHtml(relativeTime(message.created_at))}</small></header><p>“${escapeHtml(message.parsed.text)}”</p><footer>◇ ${useful} found this useful</footer></blockquote>`;
+  }).join("");
+}
+
+function profileLoadMore(type, shown, total) {
+  const remaining = Math.max(0, total - shown);
+  return remaining ? `<button class="profile-load-more" type="button" data-chain-profile-more="${type}">Load 3 more <small>${remaining} remaining</small><span class="glyph" aria-hidden="true">↓</span></button>` : "";
+}
+
+function patchValidatorProfile() {
+  const panel = document.querySelector(".representative-panel");
+  if (!panel || !state.activeValidatorAddress) return;
+  const validator = state.validators.find((candidate) => candidate.operator_address === state.activeValidatorAddress);
+  if (!validator) return;
+  const allMessages = profileMessages();
+  const ownComments = topProfileMessages(allMessages.filter((message) => message.cosmosAuthor === validator.accountAddress));
+  const communityAddresses = new Set((validator.delegators || []).filter((address) => address !== validator.accountAddress));
+  const communityComments = topProfileMessages(allMessages.filter((message) => communityAddresses.has(message.cosmosAuthor)
+    && !["validator-comment", "representative-ask"].includes(message.parsed?.role)));
+  const recentChoices = state.proposals
+    .map((proposal) => ({ proposal, vote: (proposal.votes || []).find((entry) => entry.voter === validator.accountAddress) }))
+    .filter((entry) => entry.vote)
+    .sort((left, right) => Number(right.proposal.id) - Number(left.proposal.id));
+  const voteLimit = Number(panel.dataset.chainVoteLimit || 3);
+  const commentLimit = Number(panel.dataset.chainCommentLimit || 3);
+  const communityLimit = Number(panel.dataset.chainCommunityLimit || 3);
+  const reactionTotal = [...ownComments, ...communityComments].reduce((sum, message) => sum + reactionState(message.proposalId, message).useful, 0);
+  const signature = `${validator.operator_address}:${validator.delegationKud}:${validator.delegatorCount}:${validator.powerPercent}:${validator.reliabilityPercent}:${validator.voteCount}:${recentChoices.length}:${ownComments.length}:${communityComments.length}:${reactionTotal}:${voteLimit}:${commentLimit}:${communityLimit}`;
+  if (panel.dataset.chainProfileSignature === signature) return;
+  panel.dataset.chainProfileSignature = signature;
+  panel.dataset.chainValidator = validator.operator_address;
+  panel.setAttribute("aria-label", `${validator.name} profile`);
+
+  const identity = panel.querySelector(".profile-identity");
+  const title = identity?.querySelector("h2");
+  const description = identity?.querySelector("p");
+  const badge = identity?.querySelector("em");
+  const avatar = identity?.querySelector(".representative-avatar");
+  if (title) title.textContent = validator.name;
+  if (description) description.textContent = validator.description?.details || "Keeps Kudora running and takes part in community decisions.";
+  if (badge) badge.textContent = Number(validator.delegationKud) > 0 ? "Your representative" : "Available to choose";
+  if (avatar) {
+    avatar.setAttribute("aria-label", validator.name);
+    avatar.setAttribute("title", validator.name);
+    const monogram = avatar.querySelector(".portrait-monogram");
+    if (monogram) monogram.textContent = validator.name.split(/\s+/).map((word) => word[0]).join("").slice(0, 2).toUpperCase();
+  }
+
+  const metrics = [...panel.querySelectorAll(".profile-metrics > span")];
+  const metricValues = [
+    ["People behind them", validator.delegatorCount === null ? "—" : `${validator.delegatorCount.toLocaleString("en-US")} people`, ""],
+    ["Community influence", validator.powerPercent === null ? "—" : `${validator.powerPercent.toFixed(2)}%`, "of represented voices"],
+    ["Decisions joined", `${validator.voteCount ?? 0} of ${state.proposals.length}`, ""],
+    ["Reliability", validator.reliabilityPercent === null ? "—" : `${validator.reliabilityPercent.toFixed(2)}%`, ""],
+  ];
+  metrics.forEach((metric, index) => {
+    const [label, value, detail] = metricValues[index];
+    if (!label) return;
+    metric.querySelector("small").textContent = label;
+    metric.querySelector("strong").textContent = value;
+    let note = metric.querySelector("em");
+    if (detail && !note) {
+      note = document.createElement("em");
+      metric.append(note);
+    }
+    if (note) {
+      note.textContent = detail;
+      note.hidden = !detail;
+    }
+  });
+
+  const sections = [...panel.querySelectorAll(".representative-panel-body > .profile-section")];
+  const choicesSection = sections[0];
+  const commentsSection = sections[1];
+  const visibleChoices = recentChoices.slice(0, voteLimit);
+  const history = choicesSection?.querySelector(".profile-vote-history");
+  if (history) history.innerHTML = visibleChoices.map(({ proposal, vote }) => {
+    const choice = voteLabel(vote);
+    return `<article class="progressive-reveal"><div><small>KIP–${escapeHtml(proposal.id)}</small><strong>${escapeHtml(proposal.title)}</strong></div><span class="vote-label ${choice.toLowerCase().replaceAll(" ", "-")}" aria-label="Voted ${escapeHtml(choice)}">${escapeHtml(choice)}</span></article>`;
+  }).join("") + profileLoadMore("votes", visibleChoices.length, recentChoices.length);
+
+  const ownVisible = ownComments.slice(0, commentLimit);
+  const ownContainer = commentsSection?.querySelector(".profile-comments");
+  if (ownContainer) ownContainer.innerHTML = profileCommentsMarkup(ownVisible, "No public comment from this representative yet.")
+    + profileLoadMore("comments", ownVisible.length, ownComments.length);
+
+  let communitySection = panel.querySelector("[data-chain-community-voices]");
+  if (!communitySection) {
+    communitySection = document.createElement("section");
+    communitySection.className = "profile-section";
+    communitySection.dataset.chainCommunityVoices = "true";
+    communitySection.innerHTML = '<div class="profile-section-title"><span>COMMUNITY VOICES</span><small>Top points from people behind them</small></div><div class="profile-comments"></div>';
+    panel.querySelector(".representative-panel-body")?.append(communitySection);
+  }
+  const communityVisible = communityComments.slice(0, communityLimit);
+  communitySection.querySelector(".profile-comments").innerHTML = profileCommentsMarkup(communityVisible, "Their community has not posted a public comment yet.")
+    + profileLoadMore("community", communityVisible.length, communityComments.length);
+
+  const action = panel.querySelector(".representative-panel-action button");
+  if (action) {
+    action.dataset.chainProfileDelegate = validator.operator_address;
+    action.innerHTML = `${Number(validator.delegationKud) > 0 ? "Add KUD" : "Choose"} <span class="glyph" aria-hidden="true">→</span>`;
+  }
+  const actionNote = panel.querySelector(".representative-panel-action small");
+  if (actionNote) actionNote.textContent = "You keep control and can change your choice later.";
+}
+
 function openValidatorPanel(validatorAddress) {
   const validator = state.validators.find((candidate) => candidate.operator_address === validatorAddress);
   if (!validator) return;
@@ -942,6 +1075,7 @@ async function loadAllDiscussions() {
   }
   patchProposalSurface();
   patchNetworkStats();
+  patchValidatorProfile();
 }
 
 function findSection(panel, label) {
@@ -1614,15 +1748,39 @@ async function onClick(event) {
     event.stopImmediatePropagation();
     return handleWalletChoice(walletButton);
   }
-  const validatorRow = target.closest(".validator-row[data-chain-validator]");
-  const validatorAction = validatorRow || target.closest("[data-chain-delegate]");
-  if (validatorAction) {
+  const profileMore = target.closest("[data-chain-profile-more]");
+  if (profileMore) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const panel = profileMore.closest(".representative-panel");
+    const attribute = profileMore.dataset.chainProfileMore === "votes" ? "chainVoteLimit"
+      : profileMore.dataset.chainProfileMore === "comments" ? "chainCommentLimit"
+        : "chainCommunityLimit";
+    panel.dataset[attribute] = String(Number(panel.dataset[attribute] || 3) + 3);
+    delete panel.dataset.chainProfileSignature;
+    patchValidatorProfile();
+    return;
+  }
+  const profileDelegate = target.closest("[data-chain-profile-delegate]");
+  if (profileDelegate) {
     event.preventDefault();
     event.stopImmediatePropagation();
     if (!account()) return openConnectPanel();
-    const displayedName = validatorRow?.querySelector(".validator-name strong")?.textContent.trim();
-    const displayedValidator = state.validators.find((validator) => validator.name === displayedName);
-    return openValidatorPanel(displayedValidator?.operator_address || validatorRow?.dataset.chainValidator || validatorAction.dataset.chainDelegate);
+    document.querySelector(".representative-panel-header button")?.click();
+    return openValidatorPanel(profileDelegate.dataset.chainProfileDelegate);
+  }
+  const validatorRow = target.closest(".validator-row[data-chain-validator]");
+  const validatorButton = target.closest("[data-chain-delegate]");
+  if (validatorButton) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (!account()) return openConnectPanel();
+    return openValidatorPanel(validatorButton.dataset.chainDelegate);
+  }
+  if (validatorRow) {
+    state.activeValidatorAddress = validatorRow.dataset.chainValidator;
+    queueMicrotask(patchValidatorProfile);
+    return;
   }
   const ask = target.closest("[data-chain-ask]");
   if (ask) {
@@ -1853,6 +2011,7 @@ function patchAll() {
     patchAccount();
     patchMoneyForms();
     patchChoose();
+    patchValidatorProfile();
     patchNetworkStats();
     patchProposalSurface();
     patchRepresentativeActivity();
@@ -1917,6 +2076,7 @@ async function start() {
       delegationAkud: "0",
       delegationKud: "0",
       delegatorCount: null,
+      delegators: [],
       jailed: false,
       powerPercent: null,
       reliabilityPercent: null,

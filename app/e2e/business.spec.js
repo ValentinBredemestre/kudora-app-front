@@ -182,6 +182,24 @@ test("the original template exposes only live public data while disconnected", a
   await expect(page.locator(".set-stat")).toContainText("ACTIVE TEAMS");
   await expect(page.locator(".set-stat")).toContainText("3");
   await expect(page.locator(".set-stat")).toContainText("% reliable");
+
+  for (let index = 0; index < 3; index += 1) {
+    const expectedName = await rows.nth(index).locator(".validator-name strong").textContent();
+    await rows.nth(index).locator(".representative-avatar").click();
+    const profile = page.locator(".representative-panel");
+    await expect(profile).toBeVisible();
+    await expect(profile.locator(".profile-identity h2")).toHaveText(expectedName);
+    await expect(profile.locator(".profile-metrics")).toContainText("People behind them");
+    await expect(profile.locator(".profile-metrics")).toContainText("2 people");
+    await expect(profile.locator(".profile-vote-history article").first()).toContainText("KIP–");
+    await expect(profile.locator(".profile-section").nth(1).locator("blockquote").first()).toBeVisible();
+    const community = profile.locator("[data-chain-community-voices]");
+    await expect(community).toContainText("COMMUNITY VOICES");
+    await expect(community).toContainText("Top points from people behind them");
+    await expect(community.locator("blockquote").first()).toBeVisible();
+    await expect(page.locator(".k-side-panel")).toHaveCount(0);
+    await profile.getByRole("button", { name: "Close representative profile" }).click();
+  }
 });
 
 test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", async ({ page }) => {
@@ -351,6 +369,12 @@ test("Choose and Vote retain the template semantics with on-chain personal data"
   await expect(page.locator(".validator-group-label.available")).toContainText("OTHER REPRESENTATIVES");
   await expect(page.locator(".validator-row.delegated:visible")).toHaveCount(1);
   await expect(page.locator(".validator-row.delegated:visible").getByRole("button")).toHaveText("Add KUD");
+  await page.locator(".validator-row.delegated:visible .representative-avatar").click();
+  const validatorProfile = page.locator(".representative-panel");
+  await expect(validatorProfile.locator(".representative-panel-action button")).toHaveText(/Add KUD/);
+  await validatorProfile.locator(".representative-panel-action button").click();
+  await expect(page.locator("[data-chain-delegate-form]")).toBeVisible();
+  await page.locator(".k-side-panel [data-chain-close-panel]").click();
   await expect(page.locator(".active-vote-row:visible").first()).toContainText(/YES|NO|ABSTAIN/);
   await page.locator(".active-vote-row:visible").first().click();
   const activity = page.locator(".representative-activity-panel");
@@ -359,7 +383,7 @@ test("Choose and Vote retain the template semantics with on-chain personal data"
   await expect(activity).toContainText("Kudora Validator 1");
   await expect(activity.locator(".monitor-section-heading").first()).toContainText("1 representative");
   await activity.locator(".monitor-representative-trigger:visible").first().click();
-  await expect(activity).toContainText("I voted");
+  await expect(activity).toContainText(/I (voted|abstained)/i);
   await activity.locator('[aria-label*="Close"], .discussion-back').first().click();
 
   await navigate(page, "Vote");

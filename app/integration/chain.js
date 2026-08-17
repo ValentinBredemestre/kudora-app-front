@@ -670,7 +670,7 @@ export class KudoraChain {
         order_by: "desc",
       }).catch(() => null);
       const [delegationResult, voteResult, proposalResult] = await Promise.all([
-        fetchJson(`${this.config.cosmosRestUrl}/cosmos/staking/v1beta1/validators/${validator.operator_address}/delegations?pagination.limit=1&pagination.count_total=true`).catch(() => null),
+        fetchJson(`${this.config.cosmosRestUrl}/cosmos/staking/v1beta1/validators/${validator.operator_address}/delegations?pagination.limit=100&pagination.count_total=true`).catch(() => null),
         governanceSearch("/cosmos.gov.v1.MsgVote"),
         governanceSearch("/cosmos.gov.v1.MsgSubmitProposal"),
       ]);
@@ -679,7 +679,8 @@ export class KudoraChain {
         name: local?.name || validator.description?.moniker || `Validator ${index + 1}`,
         accountAddress,
         consensusAddress,
-        delegatorCount: delegationResult ? Number(delegationResult.pagination?.total || 0) : null,
+        delegatorCount: delegationResult ? Math.max(Number(delegationResult.pagination?.total || 0), delegationResult.delegation_responses?.length || 0) : null,
+        delegators: (delegationResult?.delegation_responses || []).map((entry) => entry.delegation?.delegator_address).filter(Boolean),
         delegationAkud: delegations.get(validator.operator_address) || "0",
         delegationKud: formatEther(BigInt(delegations.get(validator.operator_address) || 0)),
         powerPercent: bonded ? Number((tokens * 10_000n) / bonded) / 100 : null,
