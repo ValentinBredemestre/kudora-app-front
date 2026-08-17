@@ -236,6 +236,35 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
   await expect.poll(() => page.evaluate(() => window.__walletRequests.brave.length)).toBe(0);
 });
 
+test("seeded account activity contains real rewards, payments and moves", async ({ page }) => {
+  await freshWallet(page, "MetaMask", "alice");
+  const expected = {
+    alice: { reward: 125.5, move: -2, sent: -18.5, received: 4.75 },
+    bob: { reward: 95.25, move: -1.25, sent: -7.25, received: 18.5 },
+    carol: { reward: 70.75, move: -0.75, sent: -4.75, received: 7.25 },
+  };
+
+  for (const [name, amounts] of Object.entries(expected)) {
+    const transactions = await page.evaluate(async (accountName) => {
+      await window.KudoraChainBridge.connect("local-metamask", accountName);
+      return window.KudoraChain.transactions();
+    }, name);
+    expect(transactions.find((transaction) => transaction.category === "Rewards")?.amount).toBeCloseTo(amounts.reward);
+    expect(transactions.find((transaction) => transaction.category === "Moved")?.amount).toBeCloseTo(amounts.move);
+    expect(transactions.some((transaction) => transaction.category === "Sent" && Math.abs(transaction.amount - amounts.sent) < 0.000001)).toBe(true);
+    expect(transactions.some((transaction) => transaction.category === "Received" && Math.abs(transaction.amount - amounts.received) < 0.000001)).toBe(true);
+  }
+
+  await page.evaluate(() => window.KudoraChainBridge.connect("local-metamask", "alice"));
+  await navigate(page, "Account");
+  await page.locator('[data-transaction-filter="Rewards"]').click();
+  await expect(page.locator(".k-transaction-row").first()).toContainText("Airdrop reward from Kudora Validator 1");
+  await expect(page.locator(".k-transaction-row").first()).toContainText("+125.50");
+  await page.locator('[data-transaction-filter="Moved"]').click();
+  await expect(page.locator(".k-transaction-row").first()).toContainText("KUD moved to Mock USDC");
+  await expect(page.locator(".k-transaction-row").first()).toContainText("−2.00");
+});
+
 test("Choose and Vote retain the template semantics with on-chain personal data", async ({ page }) => {
   await freshWallet(page, "MetaMask", "alice");
   await navigate(page, "Choose");
@@ -317,11 +346,14 @@ test("the canonical Kudora UI drives real EVM and Cosmos business flows", async 
     expect(await bankBalance(local.accounts.bob.cosmosAddress) - bobBefore).toBe(KUD / 10n);
     expect(await bankBalance(local.accounts.alice.cosmosAddress)).toBeLessThan(aliceBefore - KUD / 10n);
     await expect(page.getByTestId("kud-balance")).not.toHaveText(visibleBalance);
+    await expect.poll(() => page.evaluate(() => window.KudoraChain.transactions().then((transactions) => transactions.some((transaction) => transaction.category === "Sent" && transaction.title === "Money sent to Bob" && Math.abs(transaction.amount + 0.1) < 0.000001)))).toBe(true);
+    await expect(page.locator(".k-transaction-row").filter({ hasText: "Money sent to Bob" }).first()).toContainText("−0.10");
   });
 
   await test.step("Keplr sends native KUD from the same product panel", async () => {
     await freshWallet(page, "Keplr", "bob");
     await navigate(page, "Account");
+    await expect.poll(() => page.evaluate(() => window.KudoraChain.transactions().then((transactions) => transactions.some((transaction) => transaction.category === "Received" && transaction.title === "Money received from Alice" && Math.abs(transaction.amount - 0.1) < 0.000001)))).toBe(true);
     const carolBefore = await bankBalance(local.accounts.carol.cosmosAddress);
     await page.getByRole("button", { name: /Send money/i }).click();
     const form = page.locator('form[data-money-form="send"]');
@@ -329,6 +361,7 @@ test("the canonical Kudora UI drives real EVM and Cosmos business flows", async 
     await form.locator('[name="amount"]').fill("0.1");
     await performTransaction(page, () => form.locator('button[type="submit"]').click());
     expect(await bankBalance(local.accounts.carol.cosmosAddress) - carolBefore).toBe(KUD / 10n);
+    await expect.poll(() => page.evaluate(() => window.KudoraChain.transactions().then((transactions) => transactions.some((transaction) => transaction.category === "Sent" && transaction.title === "Money sent to Carol" && Math.abs(transaction.amount + 0.1) < 0.000001)))).toBe(true);
   });
 
   let evmProposal;
@@ -462,6 +495,7 @@ test("the canonical Kudora UI drives real EVM and Cosmos business flows", async 
     await form.locator('[name="amount"]').fill("0.1");
     await performTransaction(page, () => form.locator('button[type="submit"]').click());
     expect(await tokenBalance(local.swap.mockUsdcAddress, local.accounts.alice.evmAddress)).toBeGreaterThan(tokenBefore);
+    await expect.poll(() => page.evaluate(() => window.KudoraChain.transactions().then((transactions) => transactions.some((transaction) => transaction.category === "Moved" && Math.abs(transaction.amount + 0.1) < 0.000001)))).toBe(true);
 
     await freshWallet(page, "Keplr", "bob");
     await navigate(page, "Account");

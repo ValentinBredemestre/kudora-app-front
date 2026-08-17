@@ -339,7 +339,7 @@ function accountMarkup() {
                 ["Received", "Receive"],
                 ["Sent", "Send"],
                 ["Community", "Community"],
-                ["Rewards", "Reward"],
+                ["Rewards", "Rewards"],
                 ["Moved", "Move"],
               ].map(([value, label]) => `<button type="button" data-transaction-filter="${value}" class="${value === "All" ? "active" : ""}">${label}</button>`).join("")}
             </div>
@@ -382,7 +382,7 @@ function renderTransactions() {
       <span class="k-transaction-icon ${transaction.amount > 0 ? "incoming" : "outgoing"}">${escapeHtml(transaction.icon)}</span>
       <span class="k-transaction-copy"><strong>${escapeHtml(transaction.title)}</strong><small>${escapeHtml(transaction.note)}</small></span>
       <span class="k-transaction-date"><strong>${escapeHtml(transaction.date)}</strong><small>${escapeHtml(transaction.category)}</small></span>
-      <span class="k-transaction-amount ${transaction.amount > 0 ? "positive" : ""}">${transaction.amount > 0 ? "+" : "−"}${formatKud(Math.abs(transaction.amount))}<small>${escapeHtml(transaction.status)}</small></span>
+      <span class="k-transaction-amount ${transaction.amount > 0 ? "positive" : ""}">${transaction.amount === 0 ? "On-chain" : `${transaction.amount > 0 ? "+" : "−"}${formatKud(Math.abs(transaction.amount))}`}<small>${escapeHtml(transaction.status)}</small></span>
       <span class="glyph">→</span>
     </button>`).join("") + (visible.length < transactions.length ? `
       <button type="button" class="k-load-movements" data-load-transactions>
@@ -501,7 +501,7 @@ function openTransactionPanel(transaction) {
   const panel = panelShell(`
     ${panelHeader(transaction.category.toUpperCase(), transaction.title, "A clear summary of this movement.")}
     <div class="k-panel-body">
-      <div class="k-detail-amount ${transaction.amount > 0 ? "positive" : ""}">${transaction.amount > 0 ? "+" : "−"}${formatKud(Math.abs(transaction.amount))}<small>${escapeHtml(transaction.status)}</small></div>
+      <div class="k-detail-amount ${transaction.amount > 0 ? "positive" : ""}">${transaction.amount === 0 ? "On-chain" : `${transaction.amount > 0 ? "+" : "−"}${formatKud(Math.abs(transaction.amount))}`}<small>${escapeHtml(transaction.status)}</small></div>
       <section class="k-plain-explanation"><span>WHAT HAPPENED</span><p>${escapeHtml(transaction.explanation)}</p></section>
       <dl class="k-detail-list">
         <div><dt>When</dt><dd>${escapeHtml(transaction.date)}</dd></div>

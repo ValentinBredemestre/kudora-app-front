@@ -7,6 +7,7 @@ import {
   custom,
   decodeEventLog,
   formatEther,
+  getAddress,
   http,
   keccak256,
   parseEther,
@@ -687,36 +688,89 @@ export class KudoraChain {
 
   async transactions() {
     if (!this.cosmosAddress) return [];
-    const queries = [`message.sender='${this.cosmosAddress}'`, `transfer.recipient='${this.cosmosAddress}'`];
+    const evmAddress = getAddress(this.evmAccount.address);
+    const queries = [
+      `message.sender='${this.cosmosAddress}'`,
+      `transfer.recipient='${this.cosmosAddress}'`,
+      `ethereum_tx.recipient='${evmAddress}'`,
+    ];
     const results = await Promise.all(queries.map((query) => this.rpc("tx_search", { query, prove: false, page: "1", per_page: "100", order_by: "desc" }).catch(() => ({ txs: [] }))));
     const byHash = new Map();
     for (const result of results) for (const tx of result.txs || []) byHash.set(tx.hash, tx);
+
+    const identities = new Map();
+    for (const [name, addresses] of Object.entries(this.config.accounts || {})) {
+      if (addresses.cosmosAddress) identities.set(addresses.cosmosAddress.toLowerCase(), name[0].toUpperCase() + name.slice(1));
+      if (addresses.evmAddress) identities.set(addresses.evmAddress.toLowerCase(), name[0].toUpperCase() + name.slice(1));
+    }
+    for (const validator of this.config.validators || []) {
+      if (validator.accountAddress) identities.set(validator.accountAddress.toLowerCase(), validator.name);
+      if (validator.evmAddress) identities.set(validator.evmAddress.toLowerCase(), validator.name);
+    }
+    const validators = new Set((this.config.validators || []).flatMap((validator) => [validator.accountAddress, validator.evmAddress]).filter(Boolean).map((address) => address.toLowerCase()));
+    const contractAddresses = new Set([
+      this.config.discussionPrecompileAddress,
+      this.config.governancePrecompileAddress,
+      this.config.swap.mockUsdcAddress,
+      this.config.swap.routerAddress,
+      "0x0000000000000000000000000000000000000800",
+    ].filter(Boolean).map((address) => address.toLowerCase()));
+    const sameAddress = (left, right) => Boolean(left && right) && left.toLowerCase() === right.toLowerCase();
+    const displayName = (address) => identities.get(address?.toLowerCase()) || "another account";
+    const coinAmount = (raw = "") => [...raw.matchAll(/(?:^|,)([0-9]+)akud(?:,|$)/g)].reduce((total, match) => total + BigInt(match[1]), 0n);
+
     return [...byHash.values()].sort((left, right) => Number(right.height) - Number(left.height)).map((tx) => {
       const events = tx.tx_result?.events || [];
-      const values = (type, key) => events.filter((event) => event.type === type).flatMap((event) => event.attributes || []).filter((attribute) => attribute.key === key).map((attribute) => attribute.value);
-      const action = values("message", "action").at(-1) || "Transaction";
-      const senders = values("transfer", "sender");
-      const recipients = values("transfer", "recipient");
-      const amounts = values("transfer", "amount");
-      let amount = 0;
-      for (let index = 0; index < amounts.length; index += 1) {
-        const match = amounts[index].match(/^([0-9]+)akud$/);
-        if (!match) continue;
-        const kud = Number(formatEther(BigInt(match[1])));
-        if (recipients[index] === this.cosmosAddress) amount += kud;
-        if (senders[index] === this.cosmosAddress) amount -= kud;
+      const records = (type) => events.filter((event) => event.type === type).map((event) => Object.fromEntries((event.attributes || []).map((attribute) => [attribute.key, attribute.value])));
+      const messages = records("message");
+      const action = messages.find((record) => record.action)?.action || "Transaction";
+      const transfers = records("transfer").filter((record) => record.msg_index !== undefined);
+      let movement = 0n;
+      for (const transfer of transfers) {
+        const value = coinAmount(transfer.amount);
+        if (sameAddress(transfer.recipient, this.cosmosAddress)) movement += value;
+        if (sameAddress(transfer.sender, this.cosmosAddress)) movement -= value;
       }
-      const details = {
-        "/cosmos.bank.v1beta1.MsgSend": [amount >= 0 ? "Received" : "Sent", amount >= 0 ? "Money received" : "Money sent", amount >= 0 ? "↓" : "↑"],
-        "/cosmos.gov.v1.MsgSubmitProposal": ["Community", "Proposal published", "◇"],
-        "/cosmos.gov.v1.MsgVote": ["Community", "Governance vote", "✓"],
-        "/cosmos.staking.v1beta1.MsgDelegate": ["Community", "Delegated to a validator", "◎"],
-        "/kudora.discussion.v1.MsgPost": ["Community", "Discussion contribution", "⌁"],
-        "/kudora.discussion.v1.MsgReact": ["Community", "Community reaction", "◇"],
-        "/kudora.discussion.v1.MsgZap": ["Community", "Community Zap", "ϟ"],
-        "/cosmos.evm.vm.v1.MsgEthereumTx": [amount >= 0 ? "Received" : "Sent", "EVM transaction", "◆"],
-      }[action] || ["Community", action.split(".").at(-1).replace(/^Msg/, ""), "◆"];
-      const fee = values("tx", "fee")[0]?.match(/^([0-9]+)akud$/)?.[1] || "0";
+
+      const evm = records("ethereum_tx").find((record) => record.amount !== undefined && record.recipient);
+      const evmValue = BigInt(evm?.amount || 0);
+      const evmIncoming = sameAddress(evm?.recipient, evmAddress);
+      if (action === "/cosmos.evm.vm.v1.MsgEthereumTx") {
+        movement = evmIncoming ? evmValue : -evmValue;
+      }
+      const amount = Number(formatEther(movement));
+
+      const transfer = transfers.find((record) => sameAddress(record.sender, this.cosmosAddress) || sameAddress(record.recipient, this.cosmosAddress));
+      const evmSender = messages.find((record) => record.module === "evm")?.sender;
+      const counterparty = action === "/cosmos.evm.vm.v1.MsgEthereumTx"
+        ? (evmIncoming ? evmSender : evm?.recipient)
+        : (amount > 0 ? transfer?.sender : transfer?.recipient);
+      const isReward = amount > 0 && validators.has(counterparty?.toLowerCase());
+      const isMove = action === "/cosmos.evm.vm.v1.MsgEthereumTx" && sameAddress(evm?.recipient, this.config.swap.routerAddress);
+      const isEvmPayment = action === "/cosmos.evm.vm.v1.MsgEthereumTx"
+        && evmValue > 0n
+        && !contractAddresses.has(evm.recipient.toLowerCase());
+
+      let details;
+      if (isReward) {
+        details = ["Rewards", `Airdrop reward from ${displayName(counterparty)}`, "★"];
+      } else if (isMove) {
+        details = ["Moved", "KUD moved to Mock USDC", "⇄"];
+      } else if (isEvmPayment) {
+        details = [amount > 0 ? "Received" : "Sent", `Money ${amount > 0 ? "received from" : "sent to"} ${displayName(counterparty)}`, amount > 0 ? "↓" : "↑"];
+      } else {
+        details = {
+          "/cosmos.bank.v1beta1.MsgSend": [amount > 0 ? "Received" : "Sent", `Money ${amount > 0 ? "received from" : "sent to"} ${displayName(counterparty)}`, amount > 0 ? "↓" : "↑"],
+          "/cosmos.gov.v1.MsgSubmitProposal": ["Community", "Proposal published", "◇"],
+          "/cosmos.gov.v1.MsgVote": ["Community", "Governance vote", "✓"],
+          "/cosmos.staking.v1beta1.MsgDelegate": ["Community", "Delegated to a validator", "◎"],
+          "/kudora.discussion.v1.MsgPost": ["Community", "Discussion contribution", "⌁"],
+          "/kudora.discussion.v1.MsgReact": ["Community", "Community reaction", "◇"],
+          "/kudora.discussion.v1.MsgZap": ["Community", "Community Zap", "ϟ"],
+          "/cosmos.evm.vm.v1.MsgEthereumTx": ["Community", "EVM transaction", "◆"],
+        }[action] || ["Community", action.split(".").at(-1).replace(/^Msg/, ""), "◆"];
+      }
+      const fee = coinAmount(records("tx").find((record) => record.fee)?.fee);
       return {
         id: tx.hash,
         hash: tx.hash,
@@ -726,7 +780,7 @@ export class KudoraChain {
         note: `Block #${tx.height} · ${tx.hash.slice(0, 10)}…`,
         date: `Block #${tx.height}`,
         amount,
-        fee: Number(formatEther(BigInt(fee))),
+        fee: Number(formatEther(fee)),
         status: "Confirmed",
         explanation: `Confirmed on Kudora in block #${tx.height}. Transaction ${tx.hash}.`,
       };
