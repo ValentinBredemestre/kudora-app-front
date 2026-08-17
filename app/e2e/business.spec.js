@@ -236,7 +236,7 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
   await expect.poll(() => page.evaluate(() => window.__walletRequests.brave.length)).toBe(0);
 });
 
-test("seeded account activity contains real rewards, payments and moves", async ({ page }) => {
+test("seeded account activity contains real rewards, payments, moves and zaps", async ({ page }) => {
   await freshWallet(page, "MetaMask", "alice");
   const expected = {
     alice: { reward: 125.5, move: -2, sent: -18.5, received: 4.75 },
@@ -253,6 +253,8 @@ test("seeded account activity contains real rewards, payments and moves", async 
     expect(transactions.some((transaction) => transaction.category === "Moved" && Math.abs(transaction.amount - amounts.move) < 0.000001)).toBe(true);
     expect(transactions.some((transaction) => transaction.category === "Sent" && Math.abs(transaction.amount - amounts.sent) < 0.000001)).toBe(true);
     expect(transactions.some((transaction) => transaction.category === "Received" && Math.abs(transaction.amount - amounts.received) < 0.000001)).toBe(true);
+    expect(transactions.filter((transaction) => transaction.category === "Community").every((transaction) => transaction.title.startsWith("Zap "))).toBe(true);
+    expect(transactions.every((transaction) => !transaction.note.includes("Block #"))).toBe(true);
   }
 
   await page.evaluate(() => window.KudoraChainBridge.connect("local-metamask", "alice"));
@@ -260,13 +262,29 @@ test("seeded account activity contains real rewards, payments and moves", async 
   await page.locator('[data-transaction-filter="Rewards"]').click();
   await expect(page.locator(".k-transaction-row").first()).toContainText("Airdrop reward from Kudora Validator 1");
   await expect(page.locator(".k-transaction-row").first()).toContainText("+125.50");
+  await expect(page.locator(".k-transaction-row").first().locator(".k-transaction-amount")).toHaveCSS("color", "rgb(102, 230, 164)");
   await page.locator('[data-transaction-filter="Moved"]').click();
+  await page.locator("[data-transaction-search]").fill("KUD moved to Mock USDC");
   const seededMove = page.locator(".k-transaction-row").filter({ hasText: "−2.00 KUD" });
   await expect(seededMove).toContainText("KUD moved to Mock USDC");
+  await expect(seededMove.locator(".k-transaction-amount")).toHaveCSS("color", "rgb(255, 127, 159)");
+  await page.locator("[data-transaction-search]").fill("");
   await page.locator('[data-transaction-filter="Community"]').click();
-  const communityCost = page.locator(".k-transaction-row").first().locator(".k-transaction-amount");
-  await expect(communityCost).toContainText(/Fee −0\.[0-9]+ KUD/);
-  await expect(communityCost).not.toContainText("On-chain");
+  const incomingZap = page.locator(".k-transaction-row").filter({ hasText: "Zap from Carol" });
+  await expect(incomingZap).toContainText("+0.20 KUD");
+  await expect(incomingZap.locator(".k-transaction-amount")).toHaveCSS("color", "rgb(102, 230, 164)");
+  await expect(page.locator(".k-transaction-row").first()).not.toContainText("Block #");
+
+  await page.locator('[data-transaction-filter="All"]').click();
+  await page.locator("[data-transaction-search]").fill("Discussion contribution");
+  const chainAction = page.locator(".k-transaction-row").first();
+  await expect(chainAction.locator(".k-transaction-amount")).toContainText("~0 KUD");
+  await expect(chainAction.locator(".k-transaction-amount")).not.toContainText("Fee");
+  await expect(chainAction.locator(".k-transaction-amount")).toHaveCSS("color", "rgb(255, 127, 159)");
+  await expect(chainAction).not.toContainText("Block #");
+
+  await expect(page.locator(".k-money-guide")).toContainText("Zaps");
+  await expect(page.locator(".k-money-guide")).toContainText("Own accounts & swaps");
 });
 
 test("Choose and Vote retain the template semantics with on-chain personal data", async ({ page }) => {

@@ -45,12 +45,24 @@ function formatKud(value) {
   return `${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} KUD`;
 }
 
-function formatFee(value, withLabel = false) {
-  const fee = Math.abs(Number(value));
-  if (!Number.isFinite(fee) || fee <= 0) return withLabel ? "Fee unavailable" : "Unavailable";
-  if (fee < 0.000001) return withLabel ? "Fee ≈0 KUD" : "≈0 KUD";
-  const formatted = fee.toLocaleString("en-US", { maximumFractionDigits: 6 });
-  return withLabel ? `Fee −${formatted} KUD` : `${formatted} KUD`;
+function formatApproxKud(value) {
+  const amount = Math.abs(Number(value));
+  if (!Number.isFinite(amount) || amount < 0.01) return "~0 KUD";
+  return formatKud(amount);
+}
+
+function transactionDirection(transaction) {
+  if (Number(transaction.amount) > 0) return "positive";
+  if (Number(transaction.amount) < 0 || Number(transaction.fee) > 0) return "negative";
+  return "";
+}
+
+function transactionAmount(transaction) {
+  const amount = Number(transaction.amount);
+  if (amount !== 0 && Math.abs(amount) < 0.01) return "~0 KUD";
+  if (amount > 0) return `+${formatKud(amount)}`;
+  if (amount < 0) return `−${formatKud(Math.abs(amount))}`;
+  return formatApproxKud(transaction.fee);
 }
 
 function showToast(message) {
@@ -329,10 +341,10 @@ function accountMarkup() {
         </section>
 
         <aside class="k-money-guide glass-card">
-          <div class="k-money-guide-heading"><span class="tiny-label">THIS MONTH</span><h3>Where your money went</h3></div>
-          <div class="k-category-cell"><div class="k-category-row"><span><i class="pink"></i>Community</span><b>36.00 KUD</b></div><div class="k-category-bar"><i style="width:62%"></i></div></div>
+          <div class="k-money-guide-heading"><span class="tiny-label">ON-CHAIN ACTIVITY</span><h3>How your KUD moved</h3></div>
+          <div class="k-category-cell"><div class="k-category-row"><span><i class="pink"></i>Zaps</span><b>36.00 KUD</b></div><div class="k-category-bar"><i style="width:62%"></i></div></div>
           <div class="k-category-cell"><div class="k-category-row"><span><i class="cyan"></i>People & teams</span><b>24.00 KUD</b></div><div class="k-category-bar cyan"><i style="width:41%"></i></div></div>
-          <div class="k-category-cell"><div class="k-category-row"><span><i class="violet"></i>Moved elsewhere</span><b>120.00 KUD</b></div><div class="k-category-bar violet"><i style="width:78%"></i></div></div>
+          <div class="k-category-cell" title="Funding, swaps and transfers between accounts you own"><div class="k-category-row"><span><i class="violet"></i>Own accounts & swaps</span><b>120.00 KUD</b></div><div class="k-category-bar violet"><i style="width:78%"></i></div></div>
         </aside>
 
         <section class="k-account-layout">
@@ -387,10 +399,10 @@ function renderTransactions() {
   const visible = transactions.slice(0, transactionLimit);
   list.innerHTML = visible.length ? visible.map((transaction) => `
     <button type="button" class="k-transaction-row" data-transaction-id="${escapeHtml(transaction.id)}" role="row">
-      <span class="k-transaction-icon ${transaction.amount > 0 ? "incoming" : "outgoing"}">${escapeHtml(transaction.icon)}</span>
+      <span class="k-transaction-icon ${transactionDirection(transaction) === "positive" ? "incoming" : "outgoing"}">${escapeHtml(transaction.icon)}</span>
       <span class="k-transaction-copy"><strong>${escapeHtml(transaction.title)}</strong><small>${escapeHtml(transaction.note)}</small></span>
-      <span class="k-transaction-date"><strong>${escapeHtml(transaction.date)}</strong><small>${escapeHtml(transaction.category)}</small></span>
-      <span class="k-transaction-amount ${transaction.amount > 0 ? "positive" : ""}">${transaction.amount === 0 ? formatFee(transaction.fee, true) : `${transaction.amount > 0 ? "+" : "−"}${formatKud(Math.abs(transaction.amount))}`}<small>${escapeHtml(transaction.status)}</small></span>
+      <span class="k-transaction-date"><strong>${escapeHtml(transaction.network || "Kudora")}</strong><small>${escapeHtml(transaction.category)}</small></span>
+      <span class="k-transaction-amount ${transactionDirection(transaction)}">${transactionAmount(transaction)}<small>${escapeHtml(transaction.status)}</small></span>
       <span class="glyph">→</span>
     </button>`).join("") + (visible.length < transactions.length ? `
       <button type="button" class="k-load-movements" data-load-transactions>
@@ -509,13 +521,13 @@ function openTransactionPanel(transaction) {
   const panel = panelShell(`
     ${panelHeader(transaction.category.toUpperCase(), transaction.title, "A clear summary of this movement.")}
     <div class="k-panel-body">
-      <div class="k-detail-amount ${transaction.amount > 0 ? "positive" : ""}">${transaction.amount === 0 ? formatFee(transaction.fee, true) : `${transaction.amount > 0 ? "+" : "−"}${formatKud(Math.abs(transaction.amount))}`}<small>${escapeHtml(transaction.status)}</small></div>
+      <div class="k-detail-amount ${transactionDirection(transaction)}">${transactionAmount(transaction)}<small>${escapeHtml(transaction.status)}</small></div>
       <section class="k-plain-explanation"><span>WHAT HAPPENED</span><p>${escapeHtml(transaction.explanation)}</p></section>
       <dl class="k-detail-list">
-        <div><dt>When</dt><dd>${escapeHtml(transaction.date)}</dd></div>
+        <div><dt>Network</dt><dd>${escapeHtml(transaction.network || "Kudora")}</dd></div>
         <div><dt>Category</dt><dd>${escapeHtml(transaction.category)}</dd></div>
-        <div><dt>Network fee</dt><dd>${formatFee(transaction.fee)}</dd></div>
-        <div><dt>Reference</dt><dd>${escapeHtml(transaction.note)}</dd></div>
+        <div><dt>Network fee</dt><dd>${formatApproxKud(transaction.fee)}</dd></div>
+        <div><dt>Reference</dt><dd>${escapeHtml(transaction.reference || transaction.hash || transaction.note)}</dd></div>
       </dl>
       <div class="k-safe-note"><span>✓</span><p><strong>Complete and recorded.</strong> You do not need a transaction code or network address to understand this movement.</p></div>
     </div>`, transaction.title);

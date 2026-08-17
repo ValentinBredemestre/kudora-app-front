@@ -719,7 +719,7 @@ export class KudoraChain {
     const displayName = (address) => identities.get(address?.toLowerCase()) || "another account";
     const coinAmount = (raw = "") => [...raw.matchAll(/(?:^|,)([0-9]+)akud(?:,|$)/g)].reduce((total, match) => total + BigInt(match[1]), 0n);
 
-    return [...byHash.values()].sort((left, right) => Number(right.height) - Number(left.height)).map((tx) => {
+    const transactions = [...byHash.values()].sort((left, right) => Number(right.height) - Number(left.height)).map((tx) => {
       const events = tx.tx_result?.events || [];
       const records = (type) => events.filter((event) => event.type === type).map((event) => Object.fromEntries((event.attributes || []).map((attribute) => [attribute.key, attribute.value])));
       const messages = records("message");
@@ -745,46 +745,71 @@ export class KudoraChain {
       const counterparty = action === "/cosmos.evm.vm.v1.MsgEthereumTx"
         ? (evmIncoming ? evmSender : evm?.recipient)
         : (amount > 0 ? transfer?.sender : transfer?.recipient);
-      const isReward = amount > 0 && validators.has(counterparty?.toLowerCase());
+      const isValidatorFunding = action === "/cosmos.bank.v1beta1.MsgSend" && amount > 0 && validators.has(counterparty?.toLowerCase());
       const isMove = action === "/cosmos.evm.vm.v1.MsgEthereumTx" && sameAddress(evm?.recipient, this.config.swap.routerAddress);
+      const isSelfTransfer = action === "/cosmos.bank.v1beta1.MsgSend"
+        && sameAddress(transfer?.sender, this.cosmosAddress)
+        && sameAddress(transfer?.recipient, this.cosmosAddress);
       const isEvmPayment = action === "/cosmos.evm.vm.v1.MsgEthereumTx"
         && evmValue > 0n
         && !contractAddresses.has(evm.recipient.toLowerCase());
+      const isZap = action === "/kudora.discussion.v1.MsgZap";
 
       let details;
-      if (isReward) {
-        details = ["Rewards", `Airdrop reward from ${displayName(counterparty)}`, "★"];
+      if (isValidatorFunding) {
+        details = ["Moved", "Funds added to Kudora", "＋"];
       } else if (isMove) {
         details = ["Moved", "KUD moved to Mock USDC", "⇄"];
+      } else if (isSelfTransfer) {
+        details = ["Moved", "KUD moved between your accounts", "⇄"];
       } else if (isEvmPayment) {
         details = [amount > 0 ? "Received" : "Sent", `Money ${amount > 0 ? "received from" : "sent to"} ${displayName(counterparty)}`, amount > 0 ? "↓" : "↑"];
+      } else if (isZap) {
+        details = ["Community", amount > 0 ? `Zap from ${displayName(counterparty)}` : `Zap sent to ${displayName(counterparty)}`, "ϟ"];
       } else {
         details = {
           "/cosmos.bank.v1beta1.MsgSend": [amount > 0 ? "Received" : "Sent", `Money ${amount > 0 ? "received from" : "sent to"} ${displayName(counterparty)}`, amount > 0 ? "↓" : "↑"],
-          "/cosmos.gov.v1.MsgSubmitProposal": ["Community", "Proposal published", "◇"],
-          "/cosmos.gov.v1.MsgVote": ["Community", "Governance vote", "✓"],
-          "/cosmos.staking.v1beta1.MsgDelegate": ["Community", "Delegated to a validator", "◎"],
-          "/kudora.discussion.v1.MsgPost": ["Community", "Discussion contribution", "⌁"],
-          "/kudora.discussion.v1.MsgReact": ["Community", "Community reaction", "◇"],
-          "/kudora.discussion.v1.MsgZap": ["Community", "Community Zap", "ϟ"],
-          "/cosmos.evm.vm.v1.MsgEthereumTx": ["Community", "EVM transaction", "◆"],
-        }[action] || ["Community", action.split(".").at(-1).replace(/^Msg/, ""), "◆"];
+          "/cosmos.gov.v1.MsgSubmitProposal": ["Activity", "Proposal published", "◇"],
+          "/cosmos.gov.v1.MsgVote": ["Activity", "Governance vote", "✓"],
+          "/cosmos.staking.v1beta1.MsgDelegate": ["Activity", "Delegated to a validator", "◎"],
+          "/kudora.discussion.v1.MsgPost": ["Activity", "Discussion contribution", "⌁"],
+          "/kudora.discussion.v1.MsgReact": ["Activity", "Community reaction", "◇"],
+          "/cosmos.evm.vm.v1.MsgEthereumTx": ["Activity", "EVM transaction", "◆"],
+        }[action] || ["Activity", action.split(".").at(-1).replace(/^Msg/, ""), "◆"];
       }
       const fee = coinAmount(records("tx").find((record) => record.fee)?.fee);
+      const network = action === "/cosmos.evm.vm.v1.MsgEthereumTx" ? "EVM" : "Cosmos";
       return {
         id: tx.hash,
         hash: tx.hash,
         category: details[0],
         title: details[1],
         icon: details[2],
-        note: `Block #${tx.height} · ${tx.hash.slice(0, 10)}…`,
-        date: `Block #${tx.height}`,
+        note: `Confirmed on ${network}`,
+        network,
+        reference: tx.hash,
         amount,
         fee: Number(formatEther(fee)),
         status: "Confirmed",
-        explanation: `Confirmed on Kudora in block #${tx.height}. Transaction ${tx.hash}.`,
+        explanation: `Confirmed on Kudora through the ${network} network. Transaction ${tx.hash}.`,
+        validatorFunding: isValidatorFunding,
+        fundingSourceName: isValidatorFunding ? displayName(counterparty) : undefined,
       };
     });
+
+    return Promise.all(transactions.map(async (transaction) => {
+      if (!transaction.validatorFunding) return transaction;
+      const result = await fetchJson(`${this.config.cosmosRestUrl}/cosmos/tx/v1beta1/txs/${transaction.hash}`).catch(() => null);
+      const memo = result?.tx?.body?.memo || "";
+      delete transaction.validatorFunding;
+      if (/airdrop reward/i.test(memo)) {
+        transaction.category = "Rewards";
+        transaction.title = `Airdrop reward from ${transaction.fundingSourceName}`;
+        transaction.icon = "★";
+      }
+      delete transaction.fundingSourceName;
+      return transaction;
+    }));
   }
 
   async voteRecord(proposalId, cosmosAddress = this.cosmosAddress) {

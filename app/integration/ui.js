@@ -235,14 +235,13 @@ function patchMoneyGuide() {
   if (!guide) return;
   const totals = { Community: 0, Sent: 0, Moved: 0 };
   for (const transaction of state.transactions) {
-    if (transaction.amount >= 0) continue;
-    if (transaction.category === "Community") totals.Community += Math.abs(transaction.amount);
-    else if (transaction.category === "Sent") totals.Sent += Math.abs(transaction.amount);
-    else totals.Moved += Math.abs(transaction.amount);
+    if (transaction.category === "Community" && transaction.amount < 0) totals.Community += Math.abs(transaction.amount);
+    else if (transaction.category === "Sent" && transaction.amount < 0) totals.Sent += Math.abs(transaction.amount);
+    else if (transaction.category === "Moved") totals.Moved += Math.abs(transaction.amount);
   }
   const maximum = Math.max(1, ...Object.values(totals));
   guide.querySelectorAll(".k-category-cell").forEach((cell, index) => {
-    const [label, value] = [["Community", totals.Community], ["People & teams", totals.Sent], ["Moved elsewhere", totals.Moved]][index] || ["On chain", 0];
+    const [label, value] = [["Zaps", totals.Community], ["People & teams", totals.Sent], ["Own accounts & swaps", totals.Moved]][index] || ["On chain", 0];
     const name = cell.querySelector("span");
     const amount = cell.querySelector("b");
     const bar = cell.querySelector(".k-category-bar i");
@@ -1325,7 +1324,7 @@ async function onSubmit(event) {
     if (result.proposalId) {
       await transact("Proposal community signal", () => state.chain.postPayload({ v: 1, t: "text", role: "proposal", text: "On-chain community signal for this proposal." }, result.proposalId));
     }
-    recordTransaction({ category: "Community", icon: "◇", title: "Proposal published", note: `KIP–${result.proposalId || "new"}`, amount: -1, hash: result.hash });
+    recordTransaction({ category: "Activity", icon: "◇", title: "Proposal published", note: `KIP–${result.proposalId || "new"}`, amount: -1, hash: result.hash });
     form.closest(".proposal-composer-panel")?.querySelector('[aria-label="Close proposal builder"]')?.click();
     await loadProposals();
     return;
