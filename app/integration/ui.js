@@ -1174,59 +1174,66 @@ function reactionState(proposalId, message) {
   };
 }
 
-function visualKindLabel(kind) {
-  return kind === "roadmap" ? "Roadmap" : `${kind[0].toUpperCase()}${kind.slice(1)}`;
+function visualKind(value) {
+  const label = String(value || "").trim().toLowerCase();
+  if (label.includes("roadmap") || label.includes("timeline")) return "timeline";
+  if (label.includes("budget")) return "budget";
+  if (label.includes("poll")) return "poll";
+  if (label.includes("carousel")) return "carousel";
+  return "text";
 }
 
 function defaultVisualSlide(kind) {
-  if (kind === "roadmap") return { kind, title: "A simple public roadmap", items: ["Name the owner", "Publish the first checkpoint", "Review the result together"] };
-  if (kind === "budget") return { kind, title: "How the budget is shared", items: [{ label: "Delivery", value: "55" }, { label: "Independent review", value: "25" }, { label: "Community support", value: "20" }] };
-  if (kind === "poll") return { kind, title: "What should happen next?", items: ["Approve the full plan", "Run a smaller pilot first", "Revise and discuss again"] };
-  return { kind: "text", title: "Why this matters", items: ["Explain the decision in one clear sentence.", "Show what changes for people if it is approved."] };
+  if (kind === "timeline") return { kind, title: "Three evidence gates, not just three tasks", items: ["Prototype · 12 Sep", "Community test · 03 Oct", "Go / change / stop review · 24 Oct"] };
+  if (kind === "budget") return { kind, title: "Resources follow the public outcome", items: [{ label: "Usable product", value: "55" }, { label: "User testing", value: "25" }, { label: "Support", value: "20" }] };
+  if (kind === "poll") return { kind, title: "What feels like the right next step?", items: ["Start with a small pilot", "Use the full plan", "Revise it together"], values: [55, 28, 17], votes: 40, multipleChoice: false };
+  return { kind: "text", title: "Why this needs a decision", items: ["People cannot compare the current options at a glance", "A shared comparison view would reduce repeated questions and make tradeoffs visible before the vote.", "Decision value · faster understanding, fewer hidden assumptions"] };
 }
 
-function defaultVisualDraft() {
-  return {
-    v: 1,
-    t: "carousel",
-    title: "A clear view of this idea",
-    active: 0,
-    slides: ["text", "roadmap", "budget", "poll"].map(defaultVisualSlide),
-  };
+function defaultVisualDraft(kind) {
+  if (kind === "carousel") {
+    return { v: 1, t: "carousel", title: "From need to decision", active: 0, slides: ["text", "timeline", "budget"].map(defaultVisualSlide) };
+  }
+  return { v: 1, t: kind, ...defaultVisualSlide(kind) };
 }
 
-function visualSlideMarkup(slide, index) {
-  const items = Array.isArray(slide.items) ? slide.items : [];
-  if (slide.kind === "budget") {
-    return `<section class="k-visual-slide k-visual-budget" data-chain-visual-slide="${index}" ${index ? "hidden" : ""}>
-      <h4>${escapeHtml(slide.title || "Budget")}</h4>
-      <div>${items.map((item) => {
-        const label = typeof item === "object" ? item.label : String(item).split("·")[0];
-        const value = Math.max(0, Math.min(100, Number(typeof item === "object" ? item.value : String(item).split("·")[1]) || 0));
-        return `<span><b>${escapeHtml(label)}</b><i><em style="width:${value}%"></em></i><strong>${value}%</strong></span>`;
-      }).join("")}</div>
-    </section>`;
+function visualCardMarkup(visual, options = {}) {
+  const kind = visualKind(visual.kind || visual.t);
+  const title = escapeHtml(visual.title || "A clear view");
+  const items = Array.isArray(visual.items) ? visual.items : [];
+  const nested = options.nested ? " data-chain-carousel-slide" : "";
+  const hidden = options.hidden ? " hidden" : "";
+  if (kind === "timeline") {
+    return `<section class="discussion-visual-card visual-timeline compact" aria-label="Timeline: ${title}"${nested}${hidden}><header><span>TIMELINE</span><strong>${title}</strong></header><div class="visual-timeline">${items.map((item, index) => `<span><i>${String(index + 1).padStart(2, "0")}</i><b>${escapeHtml(item)}</b></span>`).join("")}</div></section>`;
   }
-  if (slide.kind === "roadmap") {
-    return `<section class="k-visual-slide k-visual-roadmap" data-chain-visual-slide="${index}" ${index ? "hidden" : ""}><h4>${escapeHtml(slide.title || "Roadmap")}</h4><ol>${items.map((item, itemIndex) => `<li><i>${String(itemIndex + 1).padStart(2, "0")}</i><span>${escapeHtml(item)}</span></li>`).join("")}</ol></section>`;
+  if (kind === "budget") {
+    const lines = items.map((item) => ({
+      label: typeof item === "object" ? item.label : String(item).split("·")[0],
+      value: Math.max(0, Number(typeof item === "object" ? item.value : String(item).split("·")[1]) || 0),
+    }));
+    const maximum = Math.max(1, ...lines.map((item) => item.value));
+    return `<section class="discussion-visual-card visual-budget compact" aria-label="Budget: ${title}"${nested}${hidden}><header><span>BUDGET</span><strong>${title}</strong></header><div class="visual-budget">${lines.map((item) => `<span><b>${escapeHtml(item.label)}</b><i><em style="width:${Math.round((item.value / maximum) * 100)}%"></em></i><strong>${item.value}%</strong></span>`).join("")}</div></section>`;
   }
-  if (slide.kind === "poll") {
-    return `<section class="k-visual-slide k-visual-poll" data-chain-visual-slide="${index}" ${index ? "hidden" : ""}><h4>${escapeHtml(slide.title || "Poll")}</h4><ol>${items.map((item) => `<li><i aria-hidden="true"></i><span>${escapeHtml(item)}</span></li>`).join("")}</ol></section>`;
+  if (kind === "poll") {
+    const values = items.map((_, index) => Math.max(0, Number(visual.values?.[index]) || 0));
+    const total = values.reduce((sum, value) => sum + value, 0);
+    const percentages = values.map((value) => total ? Math.round((value / total) * 100) : 0);
+    return `<section class="discussion-visual-card visual-poll compact" aria-label="Poll: ${title}" data-chain-poll data-multiple-choice="${Boolean(visual.multipleChoice)}"${nested}${hidden}><header><span>COMMUNITY POLL</span><strong>${title}</strong><small>${visual.multipleChoice ? "Choose several" : "Choose one"} · ${Number(visual.votes) || 0} votes</small></header><div class="visual-poll">${items.map((item, index) => `<button type="button" data-chain-poll-option aria-pressed="false"><span class="poll-choice-mark">○</span><span class="poll-option-copy"><strong>${escapeHtml(item)}</strong><i><em style="width:${percentages[index]}%"></em></i></span><b>${percentages[index]}%</b></button>`).join("")}</div></section>`;
   }
-  return `<section class="k-visual-slide k-visual-text" data-chain-visual-slide="${index}" ${index ? "hidden" : ""}><h4>${escapeHtml(slide.title || "Text")}</h4>${items.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</section>`;
+  return `<section class="discussion-visual-card visual-text compact" aria-label="Text: ${title}"${nested}${hidden}><header><span>TEXT</span><strong>${title}</strong></header><div class="visual-text-slide"><strong>${escapeHtml(items[0] || "")}</strong><p>${escapeHtml(items[1] || "")}</p><small>${escapeHtml(items[2] || "")}</small></div></section>`;
+}
+
+function carouselMarkup(parsed) {
+  const slides = (parsed.slides || []).filter((slide) => ["text", "timeline", "budget", "poll"].includes(visualKind(slide?.kind)));
+  if (!slides.length) return "";
+  return `<section class="discussion-visual-card visual-carousel compact" aria-label="Carousel: ${escapeHtml(parsed.title || "From need to decision")}" data-chain-carousel data-active-slide="0"><header><span>STORY CAROUSEL</span><strong>${escapeHtml(parsed.title || "From need to decision")}</strong><small data-chain-carousel-position>1 / ${slides.length}</small></header><div class="discussion-carousel-stage">${slides.map((slide, index) => visualCardMarkup(slide, { nested: true, hidden: index !== 0 })).join("")}</div><nav aria-label="Carousel slides"><button type="button" data-chain-carousel-previous disabled aria-label="Previous slide">←</button><span>${slides.map((_, index) => `<button type="button" data-chain-carousel-dot="${index}" class="${index ? "" : "active"}" aria-label="Show slide ${index + 1}" aria-pressed="${index === 0}"></button>`).join("")}</span><button type="button" data-chain-carousel-next aria-label="Next slide">→</button></nav></section>`;
 }
 
 function contentMarkup(parsed) {
   const text = parsed.text ? `<p>${escapeHtml(parsed.text)}</p>` : "";
-  if (parsed.t !== "carousel" || !Array.isArray(parsed.slides) || !parsed.slides.length) return text;
-  const slides = parsed.slides.filter((slide) => ["text", "roadmap", "budget", "poll"].includes(slide?.kind));
-  if (!slides.length) return text;
-  return `${text}<section class="discussion-visual-card k-discussion-visual" data-chain-visual data-active-slide="0">
-    <header><span>VISUAL</span><strong>${escapeHtml(parsed.title || "A clear view")}</strong></header>
-    <nav aria-label="Visual pages">${slides.map((slide, index) => `<button type="button" data-chain-visual-tab="${index}" class="${index ? "" : "active"}" aria-pressed="${index === 0}"><span>${index + 1}</span>${escapeHtml(visualKindLabel(slide.kind))}</button>`).join("")}</nav>
-    <div class="k-visual-slides">${slides.map(visualSlideMarkup).join("")}</div>
-    <footer><span data-chain-visual-position>1 / ${slides.length}</span><span><button type="button" data-chain-visual-previous disabled aria-label="Previous visual page">←</button><button type="button" data-chain-visual-next aria-label="Next visual page">→</button></span></footer>
-  </section>`;
+  if (parsed.t === "carousel") return `${text}${carouselMarkup(parsed)}`;
+  if (["timeline", "budget", "poll"].includes(visualKind(parsed.t))) return `${text}${visualCardMarkup(parsed)}`;
+  return text;
 }
 
 function renderMessage(proposalId, message) {
@@ -1300,65 +1307,57 @@ function sessionControls() {
   return `<div class="k-chain-session-controls" data-testid="quick-interactions"><span><small>QUICK INTERACTIONS</small><strong>${enabled ? "Enabled for this browser tab" : "Use one approval for comments and reactions"}</strong></span><button type="button" data-chain-session="authorize">${enabled ? "Refill / renew" : "Enable once"}</button>${enabled ? '<button type="button" data-chain-session="revoke">Revoke</button>' : ""}</div>`;
 }
 
-function visualEditorFields(slide) {
-  const items = Array.isArray(slide.items) ? slide.items : [];
-  if (slide.kind === "budget") {
-    return `<fieldset><legend>Budget lines</legend>${items.map((item, index) => `<div class="k-visual-budget-field"><input data-chain-visual-item="${index}" data-chain-visual-part="label" value="${escapeHtml(item.label || "")}" aria-label="Budget line ${index + 1}"><label><input data-chain-visual-item="${index}" data-chain-visual-part="value" type="number" min="0" max="100" value="${escapeHtml(item.value || "0")}" aria-label="Budget percentage ${index + 1}"><span>%</span></label></div>`).join("")}</fieldset>`;
+function visualItemsFromBuilder(builder, kind) {
+  const rows = [...builder.querySelectorAll(".visual-builder-fields > .visual-builder-row")];
+  if (kind === "budget") {
+    return rows.map((row) => {
+      const inputs = [...row.querySelectorAll("input, textarea")];
+      return { label: inputs[0]?.value || "", value: inputs[1]?.value || "0" };
+    });
   }
-  const label = slide.kind === "roadmap" ? "Roadmap steps" : slide.kind === "poll" ? "Poll choices" : "Text";
-  return `<fieldset><legend>${label}</legend>${items.map((item, index) => `<textarea rows="2" data-chain-visual-item="${index}" aria-label="${escapeHtml(label)} ${index + 1}">${escapeHtml(item)}</textarea>`).join("")}</fieldset>`;
+  return rows.map((row) => row.querySelector("input, textarea")?.value || "");
 }
 
-function renderVisualBuilder(composer, force = false) {
-  composer.querySelector(".discussion-visual-builder")?.remove();
-  const tools = composer.querySelector(".comment-starters");
-  if (!tools) return;
-  [...tools.querySelectorAll(":scope > button")].forEach((button) => { button.hidden = true; });
-  let create = tools.querySelector("[data-chain-create-visual]");
-  if (!create) {
-    create = document.createElement("button");
-    create.type = "button";
-    create.dataset.chainCreateVisual = "true";
-    create.textContent = "Create visual";
-    tools.append(create);
+function captureVisualBuilder(builder) {
+  if (!builder) return state.visualDraft;
+  const carousel = builder.classList.contains("carousel-builder");
+  if (!carousel) {
+    const kind = visualKind(builder.querySelector("header span")?.textContent);
+    const title = builder.querySelector(":scope > label input")?.value || "";
+    const draft = { v: 1, t: kind, kind, title, items: visualItemsFromBuilder(builder, kind) };
+    if (kind === "poll") {
+      draft.multipleChoice = [...builder.querySelectorAll(".poll-mode-picker button")].some((button) => button.getAttribute("aria-pressed") === "true" && /several/i.test(button.textContent));
+      draft.values = draft.items.map(() => 0);
+      draft.votes = 0;
+    }
+    state.visualDraft = draft;
+    return draft;
   }
-  create.hidden = Boolean(state.visualDraft);
-  let builder = composer.querySelector(".k-chain-visual-builder");
-  if (!state.visualDraft) {
-    builder?.remove();
-    return;
+
+  if (!state.visualDraft || state.visualDraft.t !== "carousel") state.visualDraft = defaultVisualDraft("carousel");
+  const tabs = [...builder.querySelectorAll(".carousel-slide-builder nav > div")];
+  const active = Math.max(0, tabs.findIndex((tab) => tab.classList.contains("active")));
+  const directInputs = [...builder.querySelectorAll(":scope > label > input")];
+  const activeKind = visualKind(tabs[active]?.querySelector(":scope > button")?.textContent);
+  const slide = {
+    kind: activeKind,
+    title: directInputs[1]?.value || "",
+    items: visualItemsFromBuilder(builder, activeKind),
+  };
+  if (activeKind === "poll") {
+    slide.multipleChoice = [...builder.querySelectorAll(".poll-mode-picker button")].some((button) => button.getAttribute("aria-pressed") === "true" && /several/i.test(button.textContent));
+    slide.values = slide.items.map(() => 0);
+    slide.votes = 0;
   }
-  if (builder && !force) return;
-  builder?.remove();
-  const draft = state.visualDraft;
-  const active = Math.min(draft.active || 0, draft.slides.length - 1);
-  draft.active = Math.max(0, active);
-  const slide = draft.slides[draft.active];
-  builder = document.createElement("section");
-  builder.className = "k-chain-visual-builder";
-  builder.dataset.testid = "visual-builder";
-  builder.innerHTML = `
-    <header><span><small>VISUAL</small><strong>Build one clear story</strong></span><button type="button" data-chain-remove-visual aria-label="Remove visual">×</button></header>
-    <label class="k-visual-title"><span>Visual title</span><input data-chain-visual-title value="${escapeHtml(draft.title)}"></label>
-    <nav class="k-chain-slide-list" aria-label="Visual pages">${draft.slides.map((candidate, index) => `<div class="${index === draft.active ? "active" : ""}"><button type="button" data-chain-edit-slide="${index}"><span>${index + 1}</span>${escapeHtml(visualKindLabel(candidate.kind))}</button><span><button type="button" data-chain-move-slide="${index}" data-direction="-1" ${index === 0 ? "disabled" : ""} aria-label="Move page ${index + 1} left">←</button><button type="button" data-chain-move-slide="${index}" data-direction="1" ${index === draft.slides.length - 1 ? "disabled" : ""} aria-label="Move page ${index + 1} right">→</button><button type="button" data-chain-remove-slide="${index}" aria-label="Remove page ${index + 1}">×</button></span></div>`).join("")}</nav>
-    <div class="k-chain-slide-editor"><label><span>${escapeHtml(visualKindLabel(slide.kind))} title</span><input data-chain-slide-title value="${escapeHtml(slide.title)}"></label>${visualEditorFields(slide)}</div>
-    <div class="k-chain-add-slide"><span>Add a page</span>${["text", "roadmap", "budget", "poll"].map((kind) => `<button type="button" data-chain-add-slide="${kind}" ${draft.slides.length >= 6 ? "disabled" : ""}>+ ${visualKindLabel(kind)}</button>`).join("")}</div>`;
-  tools.after(builder);
+  state.visualDraft.title = directInputs[0]?.value || state.visualDraft.title;
+  state.visualDraft.active = active;
+  state.visualDraft.slides[active] = slide;
+  return state.visualDraft;
 }
 
 function updateVisualDraft(event) {
-  if (!state.visualDraft || !(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)) return;
-  const field = event.target;
-  const builder = field.closest(".k-chain-visual-builder");
-  if (!builder) return;
-  const slide = state.visualDraft.slides[state.visualDraft.active];
-  if (field.matches("[data-chain-visual-title]")) state.visualDraft.title = field.value;
-  else if (field.matches("[data-chain-slide-title]")) slide.title = field.value;
-  else if (field.matches("[data-chain-visual-item]")) {
-    const index = Number(field.dataset.chainVisualItem);
-    if (slide.kind === "budget") slide.items[index][field.dataset.chainVisualPart] = field.value;
-    else slide.items[index] = field.value;
-  }
+  if (!(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)) return;
+  captureVisualBuilder(event.target.closest(".discussion-visual-builder"));
 }
 
 function patchDiscussionPanel() {
@@ -1372,9 +1371,16 @@ function patchDiscussionPanel() {
   const count = panel.querySelector(".discussion-thread-heading small");
   if (count) count.textContent = `${messages.length} ${messages.length === 1 ? "comment" : "comments"}`;
   const thread = panel.querySelector(".discussion-thread");
-  if (thread) thread.innerHTML = messages.length
-    ? messages.map((message) => renderMessage(proposal.id, message)).join("")
-    : '<div class="k-chain-empty-discussion"><strong>No on-chain comment yet.</strong><span>Start the conversation below.</span></div>';
+  const signature = `${account()?.evmAddress || "guest"}|${messages.map((message) => {
+    const reactions = reactionState(proposal.id, message);
+    return `${message.messageId}:${message.parentId}:${message.created_at}:${reactions.useful}:${reactions.notUseful}:${reactions.own}`;
+  }).join("|")}`;
+  if (thread && thread.dataset.chainSignature !== signature) {
+    thread.innerHTML = messages.length
+      ? messages.map((message) => renderMessage(proposal.id, message)).join("")
+      : '<div class="k-chain-empty-discussion"><strong>No on-chain comment yet.</strong><span>Start the conversation below.</span></div>';
+    thread.dataset.chainSignature = signature;
+  }
   const composer = panel.querySelector(".discussion-composer");
   if (composer) {
     composer.dataset.chainProposalId = proposal.id;
@@ -1403,25 +1409,25 @@ function patchDiscussionPanel() {
       }
       reply.textContent = `↳ Replying to message #${state.parentId}`;
     } else reply?.remove();
-    renderVisualBuilder(composer);
   }
 }
 
 function discussionPayload(form) {
   const text = form.querySelector("textarea[placeholder*='discussion']")?.value.trim() || form.querySelector("textarea")?.value.trim() || "";
-  if (!state.visualDraft) return { v: 1, t: "text", text };
-  const payload = {
-    v: 1,
-    t: "carousel",
-    title: state.visualDraft.title.trim(),
-    slides: state.visualDraft.slides.map((slide) => ({
-      kind: slide.kind,
-      title: slide.title.trim(),
-      items: slide.items.map((item) => typeof item === "object"
-        ? { label: item.label.trim(), value: item.value.trim() }
-        : item.trim()).filter((item) => typeof item === "object" ? item.label : item),
-    })),
-  };
+  const builder = form.querySelector(".discussion-visual-builder");
+  const draft = captureVisualBuilder(builder);
+  if (!builder || !draft) return { v: 1, t: "text", text };
+  const cleanSlide = (slide) => ({
+    kind: visualKind(slide.kind),
+    title: String(slide.title || "").trim(),
+    items: (slide.items || []).map((item) => typeof item === "object"
+      ? { label: String(item.label || "").trim(), value: String(item.value || "0").trim() }
+      : String(item).trim()).filter((item) => typeof item === "object" ? item.label : item),
+    ...(slide.kind === "poll" ? { multipleChoice: Boolean(slide.multipleChoice), values: slide.values || [], votes: Number(slide.votes) || 0 } : {}),
+  });
+  const payload = draft.t === "carousel"
+    ? { v: 1, t: "carousel", title: String(draft.title || "").trim(), slides: draft.slides.map(cleanSlide) }
+    : { v: 1, t: draft.t, ...cleanSlide(draft) };
   if (text) payload.text = text;
   if (encoder.encode(JSON.stringify(payload)).length > 8 * 1024) throw new Error("Discussion payload exceeds the 8 KiB chain limit");
   return payload;
@@ -1457,82 +1463,76 @@ async function handleWalletChoice(button) {
 async function onClick(event) {
   const target = event.target;
   if (!(target instanceof Element)) return;
-  const visualTab = target.closest("[data-chain-visual-tab]");
-  const visualDirection = target.closest("[data-chain-visual-previous], [data-chain-visual-next]");
-  if (visualTab || visualDirection) {
+  const carouselControl = target.closest("[data-chain-carousel-previous], [data-chain-carousel-next], [data-chain-carousel-dot]");
+  if (carouselControl) {
     event.preventDefault();
     event.stopImmediatePropagation();
-    const visual = target.closest("[data-chain-visual]");
-    const slides = [...visual.querySelectorAll("[data-chain-visual-slide]")];
+    const visual = carouselControl.closest("[data-chain-carousel]");
+    const slides = [...visual.querySelectorAll(":scope > .discussion-carousel-stage > [data-chain-carousel-slide]")];
     let active = Number(visual.dataset.activeSlide || 0);
-    if (visualTab) active = Number(visualTab.dataset.chainVisualTab);
-    else active += visualDirection.matches("[data-chain-visual-next]") ? 1 : -1;
+    if (carouselControl.matches("[data-chain-carousel-dot]")) active = Number(carouselControl.dataset.chainCarouselDot);
+    else active += carouselControl.matches("[data-chain-carousel-next]") ? 1 : -1;
     active = Math.max(0, Math.min(slides.length - 1, active));
     visual.dataset.activeSlide = String(active);
     slides.forEach((slide, index) => { slide.hidden = index !== active; });
-    visual.querySelectorAll("[data-chain-visual-tab]").forEach((button, index) => {
+    visual.querySelectorAll("[data-chain-carousel-dot]").forEach((button, index) => {
       button.classList.toggle("active", index === active);
       button.setAttribute("aria-pressed", String(index === active));
     });
-    visual.querySelector("[data-chain-visual-position]").textContent = `${active + 1} / ${slides.length}`;
-    visual.querySelector("[data-chain-visual-previous]").disabled = active === 0;
-    visual.querySelector("[data-chain-visual-next]").disabled = active === slides.length - 1;
+    visual.querySelector("[data-chain-carousel-position]").textContent = `${active + 1} / ${slides.length}`;
+    visual.querySelector("[data-chain-carousel-previous]").disabled = active === 0;
+    visual.querySelector("[data-chain-carousel-next]").disabled = active === slides.length - 1;
     return;
   }
-  if (target.closest("[data-chain-create-visual]")) {
+  const pollOption = target.closest("[data-chain-poll-option]");
+  if (pollOption) {
     event.preventDefault();
     event.stopImmediatePropagation();
-    state.visualDraft = defaultVisualDraft();
-    renderVisualBuilder(target.closest(".discussion-composer"), true);
-    return;
-  }
-  if (target.closest("[data-chain-remove-visual]")) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    state.visualDraft = null;
-    renderVisualBuilder(target.closest(".discussion-composer"), true);
-    return;
-  }
-  const editSlide = target.closest("[data-chain-edit-slide]");
-  if (editSlide) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    state.visualDraft.active = Number(editSlide.dataset.chainEditSlide);
-    renderVisualBuilder(target.closest(".discussion-composer"), true);
-    return;
-  }
-  const moveSlide = target.closest("[data-chain-move-slide]");
-  if (moveSlide) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    const from = Number(moveSlide.dataset.chainMoveSlide);
-    const to = from + Number(moveSlide.dataset.direction);
-    if (to >= 0 && to < state.visualDraft.slides.length) {
-      [state.visualDraft.slides[from], state.visualDraft.slides[to]] = [state.visualDraft.slides[to], state.visualDraft.slides[from]];
-      state.visualDraft.active = to;
-      renderVisualBuilder(target.closest(".discussion-composer"), true);
+    const poll = pollOption.closest("[data-chain-poll]");
+    if (poll.dataset.multipleChoice !== "true") {
+      poll.querySelectorAll("[data-chain-poll-option]").forEach((button) => {
+        button.classList.remove("active");
+        button.setAttribute("aria-pressed", "false");
+        button.querySelector(".poll-choice-mark").textContent = "○";
+      });
     }
+    const selected = pollOption.getAttribute("aria-pressed") !== "true";
+    pollOption.classList.toggle("active", selected);
+    pollOption.setAttribute("aria-pressed", String(selected));
+    pollOption.querySelector(".poll-choice-mark").textContent = selected ? "●" : "○";
     return;
   }
-  const removeSlide = target.closest("[data-chain-remove-slide]");
-  if (removeSlide) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    state.visualDraft.slides.splice(Number(removeSlide.dataset.chainRemoveSlide), 1);
-    if (!state.visualDraft.slides.length) state.visualDraft = null;
-    else state.visualDraft.active = Math.min(state.visualDraft.active, state.visualDraft.slides.length - 1);
-    renderVisualBuilder(target.closest(".discussion-composer"), true);
+  const visualStarter = target.closest(".comment-starters > button");
+  if (visualStarter) {
+    const kind = visualKind(visualStarter.textContent);
+    state.visualDraft = defaultVisualDraft(kind);
+    queueMicrotask(() => captureVisualBuilder(visualStarter.closest(".discussion-composer")?.querySelector(".discussion-visual-builder")));
     return;
   }
-  const addSlide = target.closest("[data-chain-add-slide]");
-  if (addSlide) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    if (state.visualDraft.slides.length < 6) {
-      state.visualDraft.slides.push(defaultVisualSlide(addSlide.dataset.chainAddSlide));
-      state.visualDraft.active = state.visualDraft.slides.length - 1;
-      renderVisualBuilder(target.closest(".discussion-composer"), true);
+  const nativeBuilder = target.closest(".discussion-visual-builder");
+  if (nativeBuilder) {
+    captureVisualBuilder(nativeBuilder);
+    const draft = state.visualDraft;
+    const slideTab = target.closest(".carousel-slide-builder nav > div > button:first-child");
+    const slideRow = target.closest(".carousel-slide-builder nav > div");
+    const remove = target.closest(".remove-carousel-slide");
+    const move = target.closest("button[aria-label^='Move slide']");
+    const add = target.closest(".carousel-builder button");
+    const removeVisual = target.closest("header button[aria-label*='Remove'], header button[aria-label*='Close']");
+    if (removeVisual) state.visualDraft = null;
+    if (draft?.t === "carousel") {
+      const from = [...nativeBuilder.querySelectorAll(".carousel-slide-builder nav > div")].indexOf(slideRow);
+      if (remove && from >= 0) draft.slides.splice(from, 1);
+      else if (move && from >= 0) {
+        const to = from + (/right/i.test(move.getAttribute("aria-label")) ? 1 : -1);
+        if (to >= 0 && to < draft.slides.length) [draft.slides[from], draft.slides[to]] = [draft.slides[to], draft.slides[from]];
+      } else if (slideTab && from >= 0) draft.active = from;
+      else if (add && /^\s*[+＋]\s*(Text|Roadmap|Budget|Poll)/i.test(add.textContent)) {
+        draft.slides.push(defaultVisualSlide(visualKind(add.textContent)));
+        draft.active = draft.slides.length - 1;
+      }
     }
+    queueMicrotask(() => captureVisualBuilder(nativeBuilder.isConnected ? nativeBuilder : null));
     return;
   }
   const proposalSort = target.closest("[data-chain-proposal-sort]");
@@ -1820,7 +1820,7 @@ async function onSubmit(event) {
     event.stopImmediatePropagation();
     if (!account()) return openConnectPanel();
     const payload = discussionPayload(form);
-    if (!payload.text && !payload.slides?.length) throw new Error("Write a message or add a visual");
+    if (!payload.text && !payload.items?.length && !payload.slides?.length) throw new Error("Write a message or add a visual");
     const quick = Boolean(sessionStorage.getItem("kudora-session-key"));
     await transact(state.parentId ? "Discussion reply" : "Discussion post", () => state.chain.postPayload(payload, state.activeProposal.id, state.parentId, quick));
     state.parentId = 0;
@@ -1829,8 +1829,9 @@ async function onSubmit(event) {
       textarea.value = "";
       textarea.dispatchEvent(new Event("input", { bubbles: true }));
     }
+    const removeVisual = form.querySelector(".discussion-visual-builder > header button");
+    if (removeVisual) removeVisual.click();
     state.visualDraft = null;
-    form.querySelector(".k-chain-visual-builder")?.remove();
     await loadDiscussion(state.activeProposal.id, true);
     return;
   }

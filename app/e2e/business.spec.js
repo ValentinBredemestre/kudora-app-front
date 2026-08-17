@@ -56,7 +56,11 @@ async function tokenBalance(token, address) {
 }
 
 function messageText(message) {
-  return JSON.parse(Buffer.from(message.content, "base64").toString()).text;
+  return messagePayload(message).text;
+}
+
+function messagePayload(message) {
+  return JSON.parse(Buffer.from(message.content, "base64").toString());
 }
 
 async function openApp(page) {
@@ -284,6 +288,7 @@ test("seeded account activity contains real rewards, payments, moves and zaps", 
     expect(transactions.filter((transaction) => transaction.category === "Community").every((transaction) => transaction.title.startsWith("Zap "))).toBe(true);
     expect(transactions.some((transaction) => transaction.title === "EVM transaction")).toBe(false);
     expect(transactions.every((transaction) => !transaction.note.includes("Block #"))).toBe(true);
+    expect(transactions.every((transaction) => !Number.isNaN(Date.parse(transaction.date)))).toBe(true);
   }
 
   await page.evaluate(() => window.KudoraChainBridge.connect("local-metamask", "alice"));
@@ -305,6 +310,7 @@ test("seeded account activity contains real rewards, payments, moves and zaps", 
   const incomingZap = page.locator(".k-transaction-row").filter({ hasText: "Zap from Carol" });
   await expect(incomingZap).toContainText("+0.20 KUD");
   await expect(incomingZap.locator(".k-transaction-amount")).toHaveCSS("color", "rgb(102, 230, 164)");
+  await expect(incomingZap.locator(".k-transaction-copy small")).toContainText(/Today|Yesterday|[A-Z][a-z]{2} \d/);
   await expect(page.locator(".k-transaction-row").first()).not.toContainText("Block #");
   await incomingZap.click();
   const detail = page.locator(".k-side-panel");
@@ -402,10 +408,22 @@ test("Choose and Vote retain the template semantics with on-chain personal data"
   await expect(detail).not.toContainText("Strong no");
 });
 
-test("the discussion composer keeps every control on a clear full-width row", async ({ page }) => {
+test("discussion visuals keep the native template design and the thread stays stable", async ({ page }) => {
   await freshWallet(page, "MetaMask", "alice");
+  const visualTypes = new Set();
+  let carouselProposalId;
+  for (const proposal of await proposals()) {
+    for (const message of await discussionMessages(proposal.id)) {
+      const payload = messagePayload(message);
+      if (["timeline", "budget", "poll", "carousel"].includes(payload.t)) visualTypes.add(payload.t);
+      if (payload.t === "carousel") carouselProposalId = proposal.id;
+    }
+  }
+  expect([...visualTypes].sort()).toEqual(["budget", "carousel", "poll", "timeline"]);
+  expect(carouselProposalId).toBeTruthy();
+
   await navigate(page, "Vote");
-  await page.locator(".proposal-list-item:visible").first().click();
+  await page.getByTestId(`proposal-${carouselProposalId}`).click();
   await page.getByRole("button", { name: /Open full discussion/i }).click();
 
   const composer = page.getByTestId("discussion-form");
@@ -423,21 +441,38 @@ test("the discussion composer keeps every control on a clear full-width row", as
   expect(quickBox.y).toBeLessThan(toolsBox.y);
   expect(toolsBox.y).toBeLessThan(inputBox.y);
 
-  await expect(tools.getByRole("button", { name: "Create visual" })).toBeVisible();
-  await tools.getByRole("button", { name: "Create visual" }).click();
-  const visualBuilder = page.getByTestId("visual-builder");
+  await expect(tools.getByRole("button", { name: "Roadmap", exact: true })).toBeVisible();
+  await expect(tools.getByRole("button", { name: "Budget chart", exact: true })).toBeVisible();
+  await expect(tools.getByRole("button", { name: "Poll", exact: true })).toBeVisible();
+  await expect(tools.getByRole("button", { name: "Carousel", exact: true })).toBeVisible();
+  await tools.getByRole("button", { name: "Carousel", exact: true }).click();
+  const visualBuilder = composer.locator(".discussion-visual-builder.carousel-builder");
   await expect(visualBuilder).toBeVisible();
-  await expect(visualBuilder.locator(".k-chain-slide-list > div")).toHaveCount(4);
-  await expect(visualBuilder.locator(".k-chain-slide-list")).toContainText("Text");
-  await expect(visualBuilder.locator(".k-chain-slide-list")).toContainText("Roadmap");
-  await expect(visualBuilder.locator(".k-chain-slide-list")).toContainText("Budget");
-  await expect(visualBuilder.locator(".k-chain-slide-list")).toContainText("Poll");
+  await expect(visualBuilder).toContainText("EDIT YOUR CAROUSEL");
+  await expect(visualBuilder.locator(".carousel-slide-builder nav > div")).toHaveCount(3);
+  await expect(visualBuilder).toContainText("Text");
+  await expect(visualBuilder).toContainText("Roadmap");
+  await expect(visualBuilder).toContainText("Budget");
+  await expect(visualBuilder.getByRole("button", { name: /Poll/ })).toBeVisible();
 
-  const publishedVisual = page.locator("[data-chain-visual]").first();
+  const visualPost = "A native carousel recorded on Kudora.";
+  await composer.locator("textarea[placeholder*='discussion']").fill(visualPost);
+  await performTransaction(page, () => composer.locator('button[type="submit"]').click());
+  const recorded = (await discussionMessages(carouselProposalId)).map(messagePayload).find((payload) => payload.text === visualPost);
+  expect(recorded?.t).toBe("carousel");
+  expect(recorded?.slides.map((slide) => slide.kind)).toEqual(["text", "timeline", "budget"]);
+  await expect(page.locator(".discussion-message").filter({ hasText: visualPost }).locator(".discussion-visual-card.visual-carousel")).toBeVisible();
+
+  const publishedVisual = page.locator(".discussion-visual-card.visual-carousel").first();
   await expect(publishedVisual).toBeVisible();
-  await expect(publishedVisual.locator("[data-chain-visual-tab]")).toHaveCount(4);
-  await publishedVisual.getByRole("button", { name: /Poll/ }).click();
-  await expect(publishedVisual.locator(".k-visual-poll:visible")).toBeVisible();
+  await expect(publishedVisual.locator(":scope > .discussion-carousel-stage > .discussion-visual-card")).toHaveCount(4);
+  await publishedVisual.locator("[data-chain-carousel-next]").click();
+  await expect(publishedVisual.locator("[data-chain-carousel-position]")).toHaveText("2 / 4");
+
+  const firstMessage = page.locator(".discussion-thread > .discussion-message").first();
+  const firstMessageHandle = await firstMessage.elementHandle();
+  await page.waitForTimeout(3500);
+  expect(await firstMessageHandle.evaluate((node) => node.isConnected)).toBe(true);
 
   await page.setViewportSize({ width: 390, height: 844 });
   const [mobilePanelBox, mobileQuickBox] = await Promise.all([

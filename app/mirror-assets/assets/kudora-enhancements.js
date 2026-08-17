@@ -51,6 +51,21 @@ function formatApproxKud(value) {
   return formatKud(amount);
 }
 
+function movementDate(value) {
+  if (!value) return "Date unavailable";
+  if (!/\d{4}-\d{2}-\d{2}T/.test(String(value))) return String(value);
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const days = Math.round((startOfToday - startOfDate) / 86_400_000);
+  const time = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  if (days === 0) return `Today, ${time}`;
+  if (days === 1) return `Yesterday, ${time}`;
+  return `${date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: date.getFullYear() === today.getFullYear() ? undefined : "numeric" })}, ${time}`;
+}
+
 function transactionDirection(transaction) {
   if (Number(transaction.amount) > 0) return "positive";
   if (Number(transaction.amount) < 0) return "negative";
@@ -394,14 +409,14 @@ function renderTransactions() {
   if (!list) return;
   const transactions = allTransactions().filter((transaction) => {
     const matchesFilter = accountFilter === "All" || transaction.category === accountFilter;
-    const haystack = `${transaction.title} ${transaction.note} ${transaction.category}`.toLowerCase();
+    const haystack = `${transaction.title} ${transaction.note} ${transaction.category} ${movementDate(transaction.date)}`.toLowerCase();
     return matchesFilter && (!accountSearch || haystack.includes(accountSearch));
   });
   const visible = transactions.slice(0, transactionLimit);
   list.innerHTML = visible.length ? visible.map((transaction) => `
     <button type="button" class="k-transaction-row" data-transaction-id="${escapeHtml(transaction.id)}" role="row">
       <span class="k-transaction-icon ${transactionIconDirection(transaction)}">${escapeHtml(transaction.icon)}</span>
-      <span class="k-transaction-copy"><strong>${escapeHtml(transaction.title)}</strong><small>${escapeHtml(transaction.note)}</small></span>
+      <span class="k-transaction-copy"><strong>${escapeHtml(transaction.title)}</strong><small>${escapeHtml(movementDate(transaction.date))}</small></span>
       <span class="k-transaction-date"><strong>${escapeHtml(transaction.network || "Kudora")}</strong><small>${escapeHtml(transaction.category)}</small></span>
       <span class="k-transaction-amount ${transactionDirection(transaction)}">${transactionAmount(transaction)}<small>${escapeHtml(transaction.status)}</small></span>
       <span class="glyph">→</span>

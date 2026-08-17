@@ -291,6 +291,7 @@ export class KudoraChain {
     this.ethereumProviders = new Map();
     this.cosmosAddress = null;
     this.connecting = null;
+    this.blockTimeCache = new Map();
     window.addEventListener("eip6963:announceProvider", (event) => {
       const detail = event.detail;
       if (detail?.info?.uuid && detail.provider?.request) {
@@ -475,6 +476,16 @@ export class KudoraChain {
     const body = await fetchJson(url);
     if (body.error) throw new Error(body.error.message || `RPC ${method} failed`);
     return body.result;
+  }
+
+  async blockTime(height) {
+    const key = String(height);
+    if (!this.blockTimeCache.has(key)) {
+      this.blockTimeCache.set(key, this.rpc("block", { height: key })
+        .then((result) => result.block?.header?.time || "")
+        .catch(() => ""));
+    }
+    return this.blockTimeCache.get(key);
   }
 
   async cosmosAccount() {
@@ -764,7 +775,14 @@ export class KudoraChain {
     const displayName = (address) => identities.get(address?.toLowerCase()) || "another account";
     const coinAmount = (raw = "") => [...raw.matchAll(/(?:^|,)([0-9]+)akud(?:,|$)/g)].reduce((total, match) => total + BigInt(match[1]), 0n);
 
-    const transactions = [...byHash.values()].sort((left, right) => Number(right.height) - Number(left.height)).map((tx) => {
+    const orderedTransactions = [...byHash.values()].sort((left, right) => Number(right.height) - Number(left.height));
+    const heights = [...new Set(orderedTransactions.map((tx) => String(tx.height)))];
+    const blockTimes = new Map();
+    for (let index = 0; index < heights.length; index += 12) {
+      const times = await Promise.all(heights.slice(index, index + 12).map(async (height) => [height, await this.blockTime(height)]));
+      times.forEach(([height, time]) => blockTimes.set(height, time));
+    }
+    const transactions = orderedTransactions.map((tx) => {
       const events = tx.tx_result?.events || [];
       const records = (type) => events.filter((event) => event.type === type).map((event) => Object.fromEntries((event.attributes || []).map((attribute) => [attribute.key, attribute.value])));
       const messages = records("message");
@@ -833,6 +851,7 @@ export class KudoraChain {
         title: details[1],
         icon: details[2],
         note: `Confirmed on ${network}`,
+        date: blockTimes.get(String(tx.height)) || "",
         network,
         reference: tx.hash,
         amount,
