@@ -98,7 +98,7 @@ async function copyAddress(value, label) {
     document.execCommand("copy");
     input.remove();
   }
-  window.KudoraHumanUI?.showToast(`${label} tag copied`);
+  window.KudoraHumanUI?.showToast(`${label} address copied`);
 }
 
 function closeSidePanel() {
@@ -134,7 +134,7 @@ function renderTopWallet() {
         <span class="representative-avatar portrait-lumen k-top-wallet-avatar" aria-hidden="true"></span>
         <span><small>CONNECTED ACCOUNT</small><strong>${escapeHtml(shortAddress(current.evmAddress))}</strong></span>
       </button>
-      <button type="button" class="k-top-copy" data-chain-copy="evm" aria-label="Copy EVM tag" title="Copy EVM tag"><span aria-hidden="true">⧉</span> Copy</button>
+      <button type="button" class="k-top-copy" data-chain-copy="evm" aria-label="Copy EVM address" title="Copy EVM address"><span aria-hidden="true">⧉</span> Copy</button>
     </div>` : '<button type="button" class="wallet-button" data-chain-open-connect>Connect wallet</button>';
 }
 
@@ -153,12 +153,12 @@ function openConnectedPanel() {
   const current = account();
   if (!current) return openConnectPanel();
   openSidePanel(`
-    ${panelHeader("CONNECTED WALLET", "Your public tags.", "Copy either tag when someone needs to send money to you.")}
+    ${panelHeader("CONNECTED WALLET", "Your public addresses.", "Copy either address when someone needs to send money to you.")}
     <div class="k-panel-body k-wallet-panel-body">
-      <section class="k-wallet-address-card"><div><span>EVM TAG</span><strong data-testid="evm-address">${escapeHtml(current.evmAddress)}</strong><small>Your public Ethereum-compatible tag</small></div><button type="button" data-chain-copy="evm" aria-label="Copy EVM tag"><span>⧉</span> Copy tag</button></section>
-      <section class="k-wallet-address-card"><div><span>COSMOS TAG</span><strong data-testid="cosmos-address">${escapeHtml(current.cosmosAddress)}</strong><small>Your public Kudora tag</small></div><button type="button" data-chain-copy="cosmos" aria-label="Copy Cosmos tag"><span>⧉</span> Copy tag</button></section>
+      <section class="k-wallet-address-card"><div><span>EVM ADDRESS</span><strong data-testid="evm-address">${escapeHtml(current.evmAddress)}</strong><small>Your public Ethereum-compatible address</small></div><button type="button" data-chain-copy="evm" aria-label="Copy EVM address"><span>⧉</span> Copy address</button></section>
+      <section class="k-wallet-address-card"><div><span>COSMOS ADDRESS</span><strong data-testid="cosmos-address">${escapeHtml(current.cosmosAddress)}</strong><small>Your public Kudora address</small></div><button type="button" data-chain-copy="cosmos" aria-label="Copy Cosmos address"><span>⧉</span> Copy address</button></section>
       <button type="button" class="k-disconnect-wallet" data-chain-disconnect>Disconnect Wallet</button>
-    </div>`, "Your public tags");
+    </div>`, "Your public addresses");
 }
 
 async function connectWallet(kind, accountName = state.chain.accountName || "alice") {
@@ -506,14 +506,13 @@ function patchMoneyForms() {
     const panel = move.closest(".k-side-panel");
     const heading = panel?.querySelector(".k-panel-header");
     if (heading) {
-      heading.querySelector("span").textContent = "LOCAL SWAP";
+      heading.querySelector("span").textContent = "SWAP";
       heading.querySelector("h2").textContent = "Swap KUD for Mock USDC.";
-      heading.querySelector("p").textContent = "A real local-only EVM swap. This is not a production DEX.";
+      heading.querySelector("p").textContent = "Exchange KUD for Mock USDC from your Kudora account.";
     }
     move.innerHTML = `
       <div class="k-network-route"><button type="button" class="selected"><span class="k-network-mark kudora"><img src="/kudora-logo.svg" alt=""></span><span><small>FROM</small><strong>KUD</strong></span></button><span class="k-swap-direction">⇄</span><button type="button"><span class="k-network-mark ethereum">$</span><span><small>TO</small><strong>Mock USDC</strong></span></button></div>
       <label><span>How much do you want to swap?</span><div class="k-amount-input"><input name="amount" required type="number" min="0.000001" step="0.000001" value="0.1"><b>KUD</b></div></label>
-      <div class="k-plain-explanation compact"><span>LOCALNET / E2E ONLY</span><p>Real contract, balance and receipt. No production DEX claim.</p></div>
       <button class="k-confirm-button" type="submit">Review the swap <span>→</span></button>`;
   }
   const add = document.querySelector('form[data-money-form="add"]');

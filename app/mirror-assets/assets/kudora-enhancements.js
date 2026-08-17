@@ -53,8 +53,16 @@ function formatApproxKud(value) {
 
 function transactionDirection(transaction) {
   if (Number(transaction.amount) > 0) return "positive";
-  if (Number(transaction.amount) < 0 || Number(transaction.fee) > 0) return "negative";
+  if (Number(transaction.amount) < 0) return "negative";
+  if (Number(transaction.fee) > 0) return "neutral";
   return "";
+}
+
+function transactionIconDirection(transaction) {
+  const direction = transactionDirection(transaction);
+  if (direction === "positive") return "incoming";
+  if (direction === "neutral") return "neutral";
+  return "outgoing";
 }
 
 function transactionAmount(transaction) {
@@ -96,7 +104,7 @@ async function copyAddress(value, label) {
     document.execCommand("copy");
     input.remove();
   }
-  showToast(`${label} tag copied`);
+  showToast(`${label} address copied`);
 }
 
 function reactionData(key, baseUseful) {
@@ -271,7 +279,7 @@ function topWalletMarkup() {
         <span class="representative-avatar portrait-lumen k-top-wallet-avatar" aria-hidden="true"></span>
         <span><small>CONNECTED ACCOUNT</small><strong>${escapeHtml(shortAddress(EVM_ADDRESS))}</strong></span>
       </button>
-      <button type="button" class="k-top-copy" data-copy-top-address aria-label="Copy EVM tag" title="Copy EVM tag"><span aria-hidden="true">⧉</span> Copy</button>
+      <button type="button" class="k-top-copy" data-copy-top-address aria-label="Copy EVM address" title="Copy EVM address"><span aria-hidden="true">⧉</span> Copy</button>
     </div>`;
 }
 
@@ -334,7 +342,7 @@ function accountMarkup() {
           </article>
           <aside class="k-quick-actions glass-card">
             <span class="tiny-label">WHAT DO YOU WANT TO DO?</span>
-            <button type="button" data-account-action="send"><i>↑</i><span><strong>Send money</strong><small>To a public tag</small></span><b>→</b></button>
+            <button type="button" data-account-action="send"><i>↑</i><span><strong>Send money</strong><small>To a public address</small></span><b>→</b></button>
             <button type="button" data-account-action="move"><i>⇄</i><span><strong>Move money</strong><small>To another one of your accounts</small></span><b>→</b></button>
             <button type="button" data-account-action="add"><i>＋</i><span><strong>Add money</strong><small>Bring money into Kudora</small></span><b>→</b></button>
           </aside>
@@ -392,7 +400,7 @@ function renderTransactions() {
   const visible = transactions.slice(0, transactionLimit);
   list.innerHTML = visible.length ? visible.map((transaction) => `
     <button type="button" class="k-transaction-row" data-transaction-id="${escapeHtml(transaction.id)}" role="row">
-      <span class="k-transaction-icon ${transactionDirection(transaction) === "positive" ? "incoming" : "outgoing"}">${escapeHtml(transaction.icon)}</span>
+      <span class="k-transaction-icon ${transactionIconDirection(transaction)}">${escapeHtml(transaction.icon)}</span>
       <span class="k-transaction-copy"><strong>${escapeHtml(transaction.title)}</strong><small>${escapeHtml(transaction.note)}</small></span>
       <span class="k-transaction-date"><strong>${escapeHtml(transaction.network || "Kudora")}</strong><small>${escapeHtml(transaction.category)}</small></span>
       <span class="k-transaction-amount ${transactionDirection(transaction)}">${transactionAmount(transaction)}<small>${escapeHtml(transaction.status)}</small></span>
@@ -478,18 +486,18 @@ function closePanel() {
 function openWalletPanel() {
   if (!state.walletConnected) return;
   const panel = panelShell(`
-    ${panelHeader("CONNECTED WALLET", "Your public tags.", "Copy either tag when someone needs to send money to you.")}
+    ${panelHeader("CONNECTED WALLET", "Your public addresses.", "Copy either address when someone needs to send money to you.")}
     <div class="k-panel-body k-wallet-panel-body">
       <section class="k-wallet-address-card">
-        <div><span>EVM TAG</span><strong>${escapeHtml(EVM_ADDRESS)}</strong><small>Your public Ethereum-compatible tag</small></div>
-        <button type="button" data-copy-wallet="evm" aria-label="Copy EVM tag"><span>⧉</span> Copy tag</button>
+        <div><span>EVM ADDRESS</span><strong>${escapeHtml(EVM_ADDRESS)}</strong><small>Your public Ethereum-compatible address</small></div>
+        <button type="button" data-copy-wallet="evm" aria-label="Copy EVM address"><span>⧉</span> Copy address</button>
       </section>
       <section class="k-wallet-address-card">
-        <div><span>COSMOS TAG</span><strong>${escapeHtml(COSMOS_ADDRESS)}</strong><small>Your public Kudora tag</small></div>
-        <button type="button" data-copy-wallet="cosmos" aria-label="Copy Cosmos tag"><span>⧉</span> Copy tag</button>
+        <div><span>COSMOS ADDRESS</span><strong>${escapeHtml(COSMOS_ADDRESS)}</strong><small>Your public Kudora address</small></div>
+        <button type="button" data-copy-wallet="cosmos" aria-label="Copy Cosmos address"><span>⧉</span> Copy address</button>
       </section>
       <button type="button" class="k-disconnect-wallet" data-disconnect-wallet>Disconnect Wallet</button>
-    </div>`, "Your public tags");
+    </div>`, "Your public addresses");
   bindPanelClose(panel);
   panel.querySelector("[data-copy-wallet='evm']")?.addEventListener("click", () => copyAddress(EVM_ADDRESS, "EVM"));
   panel.querySelector("[data-copy-wallet='cosmos']")?.addEventListener("click", () => copyAddress(COSMOS_ADDRESS, "Cosmos"));
@@ -537,10 +545,10 @@ function openMoneyPanel(action) {
     send: {
       eyebrow: "SEND MONEY",
       title: "Who are you paying?",
-      copy: "Use the recipient's public tag. We show every cost before you send.",
+      copy: "Use the recipient's public address. We show every cost before you send.",
       body: `<form class="k-money-form" data-money-form="send">
-        <label class="k-tag-field"><span class="k-field-label">Recipient tag <button type="button" data-tag-help aria-label="What is a tag?">?</button></span><input name="recipient" required placeholder="Paste tag"></label>
-        <div class="k-tag-help" hidden><span>TAG</span><p>A tag is a public address, not a username. Ask the person to open their connected wallet and tap <b>Copy tag</b>. This avoids paying the wrong person with a similar name.</p></div>
+        <label class="k-tag-field"><span class="k-field-label">Recipient address <button type="button" data-tag-help aria-label="What is an address?">?</button></span><input name="recipient" required placeholder="Paste address"></label>
+        <div class="k-tag-help" hidden><span>ADDRESS</span><p>An address identifies a public wallet. Ask the person to open their connected wallet and tap <b>Copy address</b>. Always verify it before sending.</p></div>
         <label><span>Amount</span><div class="k-amount-input"><input name="amount" required type="number" min="0.01" step="0.01" placeholder="0.00"><b>KUD</b></div></label>
         <label><span>Note <small>optional</small></span><input name="note" placeholder="What is this for?"></label>
         <div class="k-cost-preview"><span>You send</span><b data-live-amount>0.00 KUD</b><span>Network fee</span><b>0.01 KUD</b></div>

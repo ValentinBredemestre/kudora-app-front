@@ -253,6 +253,7 @@ button:not(:disabled),
 .k-transaction-row:hover { background: linear-gradient(90deg, rgba(82,241,223,.045), rgba(255,95,203,.025)); }
 .k-transaction-icon { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid rgba(255,95,203,.22); border-radius: 50%; background: rgba(255,95,203,.07); color: var(--k-pink); font-size: 15px; }
 .k-transaction-icon.incoming { color: var(--k-cyan); border-color: rgba(82,241,223,.22); background: rgba(82,241,223,.07); }
+.k-transaction-icon.neutral { color: var(--k-violet); border-color: rgba(168,128,255,.25); background: rgba(168,128,255,.08); }
 .k-transaction-copy, .k-transaction-date, .k-transaction-amount { display: grid; gap: 4px; min-width: 0; }
 .k-transaction-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .k-transaction-copy small, .k-transaction-date small, .k-transaction-amount small { color: #777682; font-size: 9px; }
@@ -260,6 +261,7 @@ button:not(:disabled),
 .k-transaction-amount { text-align: right; font: 700 11px/1.2 var(--font-geist-mono), monospace; }
 .k-transaction-amount.positive, .k-detail-amount.positive { color: var(--k-green) !important; }
 .k-transaction-amount.negative, .k-detail-amount.negative { color: #ff7f9f !important; }
+.k-transaction-amount.neutral, .k-detail-amount.neutral { color: var(--k-violet) !important; }
 .k-transaction-row > .glyph { color: #5f5e68; }
 .k-empty-movements { display: grid; place-items: center; gap: 7px; padding: 46px; color: #888793; }
 .k-load-movements { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; width: 100%; padding: 15px 20px; border: 0; border-bottom: 1px solid rgba(255,255,255,.06); background: rgba(255,255,255,.012); color: #c9c8d0; text-align: left; transition: .18s ease; }

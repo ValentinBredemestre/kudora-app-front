@@ -259,6 +259,9 @@ test("seeded account activity contains real rewards, payments, moves and zaps", 
   }
 
   await page.evaluate(() => window.KudoraChainBridge.connect("local-metamask", "alice"));
+  const neutralTitle = await page.evaluate(async () => (await window.KudoraChain.transactions())
+    .find((transaction) => transaction.amount === 0 && transaction.fee > 0)?.title || "");
+  expect(neutralTitle).not.toBe("");
   await navigate(page, "Account");
   await page.locator('[data-transaction-filter="Rewards"]').click();
   await expect(page.locator(".k-transaction-row").first()).toContainText("Airdrop reward from Kudora Validator 1");
@@ -282,18 +285,27 @@ test("seeded account activity contains real rewards, payments, moves and zaps", 
   await detail.locator("[data-close-panel]").click();
 
   await page.locator('[data-transaction-filter="All"]').click();
-  await page.locator("[data-transaction-search]").fill("Discussion contribution");
+  await page.locator("[data-transaction-search]").fill(neutralTitle);
   const chainAction = page.locator(".k-transaction-row").first();
   await expect(chainAction.locator(".k-transaction-amount")).toContainText("~0 KUD");
   await expect(chainAction.locator(".k-transaction-amount")).not.toContainText("Fee");
-  await expect(chainAction.locator(".k-transaction-amount")).toHaveCSS("color", "rgb(255, 127, 159)");
+  await expect(chainAction.locator(".k-transaction-amount")).toHaveCSS("color", "rgb(168, 128, 255)");
+  await expect(chainAction.locator(".k-transaction-icon")).toHaveCSS("color", "rgb(168, 128, 255)");
   await expect(chainAction).not.toContainText("Block #");
 
   await expect(page.locator(".k-money-guide")).toHaveCount(0);
   await page.locator('[data-account-action="send"]').click();
   const sendPanel = page.locator(".k-side-panel");
   await expect(sendPanel).toContainText("Network fee");
+  await expect(sendPanel).toContainText("Recipient address");
+  await expect(sendPanel.locator('input[name="recipient"]')).toHaveAttribute("placeholder", "Paste address");
   await expect(sendPanel).not.toContainText("Movement cost");
+  await expect(sendPanel).not.toContainText(/\btag\b/i);
+  await sendPanel.locator("[data-close-panel]").click();
+  await page.locator('[data-account-action="move"]').click();
+  const movePanel = page.locator(".k-side-panel");
+  await expect(movePanel).not.toContainText("LOCALNET / E2E ONLY");
+  await expect(movePanel).not.toContainText("No production DEX claim");
 });
 
 test("Choose and Vote retain the template semantics with on-chain personal data", async ({ page }) => {
@@ -336,7 +348,7 @@ test("the canonical Kudora UI drives real EVM and Cosmos business flows", async 
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
 
-  await test.step("the supplied product design is intact and one wallet has both tags", async () => {
+  await test.step("the supplied product design is intact and one wallet has both addresses", async () => {
     await freshWallet(page, "MetaMask");
     await navigate(page, "Account");
     await expect(page.locator("body")).toContainText("Everything in one place.");
