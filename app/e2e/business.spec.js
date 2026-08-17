@@ -164,8 +164,14 @@ test("the original template exposes only live public data while disconnected", a
   await expect(page.locator(".validator-group-label.available")).toContainText("OTHER REPRESENTATIVES");
   const rows = page.locator(".validator-row:not(.validator-head):visible");
   await expect(rows).toHaveCount(3);
-  await expect(rows.first().locator(".supporters")).toContainText("people");
+  await expect(page.locator(".validator-head")).toContainText("Delegators");
+  await expect(page.locator(".validator-head")).toContainText("Votes / proposals");
+  await expect(page.locator(".validator-head")).not.toContainText("Yearly rewards");
+  await expect(rows.first().locator(".validator-name small")).toContainText("Address · kudovalop");
+  await expect(rows.first().locator(".supporters")).toContainText("delegator");
   await expect(rows.first().locator(".uptime")).toContainText("%");
+  await expect(rows.first().locator(".validator-engagement")).toContainText("votes ·");
+  await expect(rows.first().locator(".validator-engagement")).toContainText("proposals");
   await expect(rows.first().getByRole("button")).toHaveText("Choose");
   await expect(page.locator(".set-stat")).toContainText("ACTIVE TEAMS");
   await expect(page.locator(".set-stat")).toContainText("3");
@@ -362,17 +368,30 @@ test("the canonical Kudora UI drives real EVM and Cosmos business flows", async 
     expect(await bankBalance(cosmosAddress)).toBeGreaterThan(0n);
   });
 
-  await test.step("MetaMask delegates real KUD to one of the three bonded validators", async () => {
+  await test.step("MetaMask delegates and undelegates real KUD from one bonded validator", async () => {
     await freshWallet(page, "MetaMask", "alice");
-    const validator = local.validators[0].operatorAddress;
+    const validatorConfig = local.validators[0];
+    const validator = validatorConfig.operatorAddress;
     const before = await delegation(local.accounts.alice.cosmosAddress, validator);
-    const row = page.locator(`.validator-row[data-chain-validator="${validator}"]`);
+    const row = page.locator(".validator-row:not(.validator-head):visible").filter({ hasText: validatorConfig.name });
     await expect(row).toBeVisible();
     await row.locator("button").click();
-    const form = page.locator("[data-chain-delegate-form]");
-    await form.locator("input[name='amount']").fill("0.01");
-    await performTransaction(page, () => form.locator("button[type='submit']").click());
+    const delegateForm = page.locator("[data-chain-delegate-form]");
+    await expect(page.locator(".k-side-panel")).toContainText("VALIDATOR ADDRESS");
+    await expect(page.locator(".k-side-panel")).toContainText(validator);
+    await expect(page.locator(".k-side-panel")).toContainText("GOVERNANCE ACTIVITY");
+    await expect(page.locator(".k-side-panel")).not.toContainText("Yearly rewards");
+    await delegateForm.locator("input[name='amount']").fill("0.01");
+    await performTransaction(page, () => delegateForm.locator("button[type='submit']").click());
     expect(await delegation(local.accounts.alice.cosmosAddress, validator) - before).toBe(KUD / 100n);
+
+    const delegatedRow = page.locator(".validator-row:not(.validator-head):visible").filter({ hasText: validatorConfig.name });
+    await delegatedRow.locator("button").click();
+    const undelegateForm = page.locator("[data-chain-undelegate-form]");
+    await expect(undelegateForm).toBeVisible();
+    await undelegateForm.locator("input[name='amount']").fill("0.005");
+    await performTransaction(page, () => undelegateForm.locator("button[type='submit']").click());
+    expect(await delegation(local.accounts.alice.cosmosAddress, validator) - before).toBe(KUD / 200n);
   });
 
   await test.step("MetaMask sends native KUD from the original Send money panel", async () => {

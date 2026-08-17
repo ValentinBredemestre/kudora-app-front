@@ -46,6 +46,7 @@ const tokenAbi = [
 
 const stakingAbi = [
   { type: "function", name: "delegate", stateMutability: "nonpayable", inputs: [{ name: "delegatorAddress", type: "address" }, { name: "validatorAddress", type: "string" }, { name: "amount", type: "uint256" }], outputs: [{ name: "success", type: "bool" }] },
+  { type: "function", name: "undelegate", stateMutability: "nonpayable", inputs: [{ name: "delegatorAddress", type: "address" }, { name: "validatorAddress", type: "string" }, { name: "amount", type: "uint256" }], outputs: [{ name: "completionTime", type: "int64" }] },
 ];
 
 function bytesFromHex(value) {
@@ -145,6 +146,10 @@ function encodeMsgDelegate(delegator, validator, amount) {
   return new Proto().string(1, delegator).string(2, validator).message(3, encodeCoin(amount)).finish();
 }
 
+function encodeMsgUndelegate(delegator, validator, amount) {
+  return new Proto().string(1, delegator).string(2, validator).message(3, encodeCoin(amount)).finish();
+}
+
 function encodeUpdateDiscussionParams(authority, postFee) {
   const params = new Proto().message(1, encodeCoin(postFee)).finish();
   return new Proto().string(1, authority).message(2, params).finish();
@@ -232,6 +237,10 @@ function evmFromCosmos(address) {
 
 function validatorConsensusAddress(publicKey) {
   return bech32.encode("kudovalcons", bech32.toWords(sha256(bytesFromBase64(publicKey.key)).slice(0, 20)), false);
+}
+
+function validatorAccountAddress(operatorAddress) {
+  return bech32.encode("kudo", bech32.decode(operatorAddress, false).words, false);
 }
 
 function contentBytes(content) {
@@ -614,38 +623,46 @@ export class KudoraChain {
       fetchJson(`${this.config.cosmosRestUrl}/cosmos/staking/v1beta1/validators?status=BOND_STATUS_BONDED&pagination.limit=100`),
       fetchJson(`${this.config.cosmosRestUrl}/cosmos/staking/v1beta1/pool`),
       fetchJson(`${this.config.cosmosRestUrl}/cosmos/slashing/v1beta1/signing_infos?pagination.limit=100`).catch(() => ({ info: [] })),
-      fetchJson(`${this.config.cosmosRestUrl}/cosmos/mint/v1beta1/inflation`).catch(() => ({ inflation: "0" })),
-      fetchJson(`${this.config.cosmosRestUrl}/cosmos/bank/v1beta1/supply/by_denom?denom=akud`).catch(() => ({ amount: { amount: "0" } })),
     ];
     if (this.cosmosAddress) requests.push(fetchJson(`${this.config.cosmosRestUrl}/cosmos/staking/v1beta1/delegations/${this.cosmosAddress}?pagination.limit=100`).catch(() => ({ delegation_responses: [] })));
-    const [validatorResponse, poolResponse, signingResponse, inflationResponse, supplyResponse, delegationResponse = { delegation_responses: [] }] = await Promise.all(requests);
+    const [validatorResponse, poolResponse, signingResponse, delegationResponse = { delegation_responses: [] }] = await Promise.all(requests);
     const bonded = BigInt(poolResponse.pool?.bonded_tokens || 0);
-    const supply = BigInt(supplyResponse.amount?.amount || 0);
-    const inflation = Number(inflationResponse.inflation || 0);
     const delegations = new Map((delegationResponse.delegation_responses || []).map((item) => [item.delegation.validator_address, item.balance?.amount || "0"]));
     const configured = new Map((this.config.validators || []).map((item) => [item.operatorAddress, item]));
     const validators = await Promise.all((validatorResponse.validators || []).map(async (validator, index) => {
       const tokens = BigInt(validator.tokens || 0);
       const local = configured.get(validator.operator_address);
+      const accountAddress = local?.accountAddress || validatorAccountAddress(validator.operator_address);
       const consensusAddress = validatorConsensusAddress(validator.consensus_pubkey);
       const signing = (signingResponse.info || []).find((item) => item.address === consensusAddress);
       const blocks = Number(signing?.index_offset || 0);
       const missed = Number(signing?.missed_blocks_counter || 0);
-      const commission = Number(validator.commission?.commission_rates?.rate || 0);
-      const delegationCount = await fetchJson(`${this.config.cosmosRestUrl}/cosmos/staking/v1beta1/validators/${validator.operator_address}/delegations?pagination.limit=1&pagination.count_total=true`)
-        .then((body) => Number(body.pagination?.total || 0))
-        .catch(() => 0);
+      const governanceSearch = (action) => this.rpc("tx_search", {
+        query: `message.sender='${accountAddress}' AND message.action='${action}'`,
+        prove: false,
+        page: "1",
+        per_page: "1",
+        order_by: "desc",
+      }).catch(() => null);
+      const [delegationResult, voteResult, proposalResult] = await Promise.all([
+        fetchJson(`${this.config.cosmosRestUrl}/cosmos/staking/v1beta1/validators/${validator.operator_address}/delegations?pagination.limit=1&pagination.count_total=true`).catch(() => null),
+        governanceSearch("/cosmos.gov.v1.MsgVote"),
+        governanceSearch("/cosmos.gov.v1.MsgSubmitProposal"),
+      ]);
       return {
         ...validator,
         name: local?.name || validator.description?.moniker || `Validator ${index + 1}`,
-        accountAddress: local?.accountAddress,
+        accountAddress,
         consensusAddress,
-        delegatorCount: delegationCount,
+        delegatorCount: delegationResult ? Number(delegationResult.pagination?.total || 0) : null,
         delegationAkud: delegations.get(validator.operator_address) || "0",
         delegationKud: formatEther(BigInt(delegations.get(validator.operator_address) || 0)),
-        powerPercent: bonded ? Number((tokens * 10_000n) / bonded) / 100 : 0,
-        reliabilityPercent: blocks ? ((blocks - missed) / blocks) * 100 : 100,
-        yearlyRewardsPercent: bonded ? inflation * (Number(supply) / Number(bonded)) * (1 - commission) * 100 : 0,
+        powerPercent: bonded ? Number((tokens * 10_000n) / bonded) / 100 : null,
+        reliabilityPercent: blocks ? ((blocks - missed) / blocks) * 100 : null,
+        observedBlocks: blocks || null,
+        missedBlocks: blocks ? missed : null,
+        voteCount: voteResult ? Number(voteResult.total_count || 0) : null,
+        proposalCount: proposalResult ? Number(proposalResult.total_count || 0) : null,
       };
     }));
     return validators.sort((left, right) => Number(BigInt(right.tokens) - BigInt(left.tokens)));
@@ -668,6 +685,20 @@ export class KudoraChain {
       address: "0x0000000000000000000000000000000000000800",
       abi: stakingAbi,
       functionName: "delegate",
+      args: [this.evmAccount.address, validatorAddress, value],
+    });
+  }
+
+  async undelegate(validatorAddress, amount) {
+    const value = parseEther(String(amount));
+    if (value <= 0n) throw new Error("Amount must be positive");
+    if (this.isKeplr()) {
+      return this.broadcastCosmos([{ typeUrl: "/cosmos.staking.v1beta1.MsgUndelegate", value: encodeMsgUndelegate(this.cosmosAddress, validatorAddress, value) }], "Kudora undelegation");
+    }
+    return this.writeEvm({
+      address: "0x0000000000000000000000000000000000000800",
+      abi: stakingAbi,
+      functionName: "undelegate",
       args: [this.evmAccount.address, validatorAddress, value],
     });
   }
@@ -774,6 +805,7 @@ export class KudoraChain {
           "/cosmos.gov.v1.MsgSubmitProposal": ["Activity", "Proposal published", "◇"],
           "/cosmos.gov.v1.MsgVote": ["Activity", "Governance vote", "✓"],
           "/cosmos.staking.v1beta1.MsgDelegate": ["Activity", "Delegated to a validator", "◎"],
+          "/cosmos.staking.v1beta1.MsgUndelegate": ["Activity", "Undelegated from a validator", "◎"],
           "/kudora.discussion.v1.MsgPost": ["Activity", "Discussion contribution", "⌁"],
           "/kudora.discussion.v1.MsgReact": ["Activity", "Community reaction", "◇"],
         }[action] || ["Activity", action.split(".").at(-1).replace(/^Msg/, ""), "◆"];

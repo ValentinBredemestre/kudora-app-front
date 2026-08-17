@@ -127,6 +127,123 @@ body:not([data-chain-wallet-connected]) .top-actions .wallet-button::after {
   font-weight: 500;
 }
 
+.validator-name small {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.validator-engagement {
+  color: #55ead8;
+  font: 650 9px/1.45 var(--font-geist-mono, monospace);
+}
+
+.k-validator-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.k-validator-address {
+  display: grid;
+  gap: 8px;
+  padding: 15px 16px;
+  border: 1px solid rgba(85, 234, 216, .22);
+  border-radius: 11px;
+  background: linear-gradient(110deg, rgba(85, 234, 216, .07), rgba(255, 255, 255, .02));
+}
+
+.k-validator-address span,
+.k-validator-action > header span {
+  color: #55ead8;
+  font: 700 8px/1 var(--font-geist-mono, monospace);
+  letter-spacing: .11em;
+}
+
+.k-validator-address strong {
+  overflow-wrap: anywhere;
+  color: #eeeaf0;
+  font: 650 11px/1.5 var(--font-geist-mono, monospace);
+}
+
+.k-validator-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.k-validator-metrics .k-wallet-address-card {
+  min-height: 105px;
+}
+
+.k-validator-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  padding-top: 2px;
+}
+
+.k-validator-actions.has-undelegate {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.k-validator-action {
+  align-content: start;
+  padding: 17px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .022);
+}
+
+.k-validator-action > header {
+  display: grid;
+  gap: 6px;
+}
+
+.k-validator-action > header small {
+  color: rgba(255, 255, 255, .48);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.k-validator-action.undelegate {
+  border-color: rgba(255, 100, 117, .18);
+  background: rgba(255, 100, 117, .025);
+}
+
+.k-validator-action.undelegate > header span {
+  color: #ff7b91;
+}
+
+.k-confirm-button.secondary {
+  border: 1px solid rgba(255, 100, 117, .35);
+  background: rgba(255, 100, 117, .08);
+  color: #ff9aac;
+}
+
+.k-confirm-button.secondary:hover {
+  border-color: rgba(255, 100, 117, .6);
+  background: rgba(255, 100, 117, .14);
+}
+
+@media (min-width: 1050px) {
+  .validator-row {
+    grid-template-columns: minmax(280px, 1.55fr) minmax(110px, .58fr) minmax(100px, .5fr) minmax(175px, .85fr) 105px;
+  }
+}
+
+@media (max-width: 760px) {
+  .validator-row > :nth-child(4)::before {
+    content: "Votes / proposals ";
+    color: var(--muted);
+  }
+
+  .k-validator-metrics,
+  .k-validator-actions.has-undelegate {
+    grid-template-columns: 1fr;
+  }
+}
+
 .k-wallet-choice-logo {
   width: 34px;
   height: 34px;

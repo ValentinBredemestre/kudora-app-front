@@ -166,12 +166,17 @@ async function connectWallet(kind, accountName = state.chain.accountName || "ali
     || (kind === "metamask" && !window.ethereum && !state.chain.currentMetaMaskProvider())
     || (kind === "keplr" && !window.keplr);
   const mode = kind.startsWith("local-") ? kind : useLocal ? `local-${kind}` : kind;
-  await transact(`Connect ${kind.replace("local-", "")}`, () => state.chain.connect(mode, accountName).then(() => ({ hash: "" })));
-  closeSidePanel();
-  renderTopWallet();
-  await Promise.all([refreshAccount(), loadProposals()]);
-  schedulePatch();
-  return mode;
+  delete document.body.dataset.chainValidatorsReady;
+  try {
+    await transact(`Connect ${kind.replace("local-", "")}`, () => state.chain.connect(mode, accountName).then(() => ({ hash: "" })));
+    renderTopWallet();
+    await Promise.all([refreshAccount(), loadProposals()]);
+    closeSidePanel();
+    return mode;
+  } finally {
+    document.body.dataset.chainValidatorsReady = "true";
+    schedulePatch();
+  }
 }
 
 function disconnectWallet() {
@@ -264,6 +269,10 @@ function patchNetworkStats() {
 function patchChoose() {
   const list = document.querySelector(".validator-list");
   if (!list || !state.validators.length) return;
+  const headerLabels = ["Representative", "Delegators", "Reliability", "Votes / proposals"];
+  [...list.querySelectorAll(".validator-head > :not(:last-child)")].forEach((cell, index) => {
+    cell.textContent = headerLabels[index];
+  });
   const connected = Boolean(account());
   const chosen = state.validators.filter((validator) => Number(validator.delegationKud) > 0);
   const other = state.validators.filter((validator) => Number(validator.delegationKud) === 0);
@@ -360,14 +369,20 @@ function patchChoose() {
       const detail = row.querySelector(".validator-name small");
       const supporters = row.querySelector(".supporters");
       const reliability = row.querySelector(".uptime");
-      const reward = row.querySelector(".positive");
+      const reward = row.querySelector(".positive, .validator-engagement");
       const button = row.querySelector("button");
       if (rank) rank.textContent = String(state.validators.indexOf(validator) + 1).padStart(2, "0");
       if (name) name.firstChild.textContent = validator.name;
-      if (detail) detail.textContent = shortAddress(validator.operator_address);
-      if (supporters) supporters.textContent = `${Number(validator.delegatorCount || 0).toLocaleString("en-US")} people`;
-      if (reliability) reliability.textContent = `${Number(validator.reliabilityPercent || 0).toFixed(2)}%`;
-      if (reward) reward.textContent = `${Number(validator.yearlyRewardsPercent || 0).toFixed(1)}%`;
+      if (detail) detail.textContent = `Address · ${shortAddress(validator.operator_address)}`;
+      if (supporters) supporters.textContent = validator.delegatorCount === null ? "—" : `${validator.delegatorCount.toLocaleString("en-US")} delegator${validator.delegatorCount === 1 ? "" : "s"}`;
+      if (reliability) reliability.textContent = validator.reliabilityPercent === null ? "—" : `${validator.reliabilityPercent.toFixed(2)}%`;
+      if (reward) {
+        reward.classList.remove("positive");
+        reward.classList.add("validator-engagement");
+        reward.textContent = validator.voteCount === null || validator.proposalCount === null
+          ? "—"
+          : `${validator.voteCount.toLocaleString("en-US")} vote${validator.voteCount === 1 ? "" : "s"} · ${validator.proposalCount.toLocaleString("en-US")} proposal${validator.proposalCount === 1 ? "" : "s"}`;
+      }
       if (button) {
         button.textContent = delegated ? "Add tokens" : "Choose";
         button.dataset.chainDelegate = validator.operator_address;
@@ -390,10 +405,13 @@ function patchChoose() {
     const label = stat.querySelector("small");
     const total = stat.querySelector("strong");
     const status = stat.querySelector("span");
-    const reliability = state.validators.reduce((sum, validator) => sum + Number(validator.reliabilityPercent || 0), 0) / state.validators.length;
+    const reliabilityValues = state.validators.map((validator) => validator.reliabilityPercent).filter((value) => value !== null);
+    const reliability = reliabilityValues.length
+      ? reliabilityValues.reduce((sum, value) => sum + value, 0) / reliabilityValues.length
+      : null;
     if (label) label.textContent = "ACTIVE TEAMS";
     if (total) total.textContent = String(state.validators.length);
-    if (status) status.innerHTML = `<i></i> ${reliability.toFixed(1)}% reliable`;
+    if (status) status.innerHTML = reliability === null ? "Reliability loading" : `<i></i> ${reliability.toFixed(1)}% reliable`;
   }
 }
 
@@ -488,14 +506,37 @@ function patchRepresentativeActivity() {
 function openValidatorPanel(validatorAddress) {
   const validator = state.validators.find((candidate) => candidate.operator_address === validatorAddress);
   if (!validator) return;
+  const power = validator.powerPercent === null ? "—" : `${validator.powerPercent.toFixed(2)}%`;
+  const reliability = validator.reliabilityPercent === null ? "—" : `${validator.reliabilityPercent.toFixed(2)}%`;
+  const reliabilityDetail = validator.observedBlocks === null
+    ? "Signing history is not available"
+    : `${validator.observedBlocks.toLocaleString("en-US")} blocks observed · ${validator.missedBlocks.toLocaleString("en-US")} missed`;
+  const engagement = validator.voteCount === null || validator.proposalCount === null
+    ? "—"
+    : `${validator.voteCount.toLocaleString("en-US")} vote${validator.voteCount === 1 ? "" : "s"} · ${validator.proposalCount.toLocaleString("en-US")} proposal${validator.proposalCount === 1 ? "" : "s"}`;
+  const delegation = Number(validator.delegationKud);
   openSidePanel(`
-    ${panelHeader("BONDED VALIDATOR", validator.name, validator.operator_address)}
-    <div class="k-panel-body"><section class="k-wallet-address-card"><div><span>VOTING POWER</span><strong>${validator.powerPercent.toFixed(2)}%</strong><small>${formatKud(Number(validator.tokens) / 1e18)} KUD bonded</small></div></section>
-      <section class="k-wallet-address-card"><div><span>YOUR DELEGATION</span><strong>${formatKud(validator.delegationKud)} KUD</strong><small>Read directly from x/staking</small></div></section>
-      <form class="k-money-form" data-chain-delegate-form data-chain-validator="${escapeHtml(validator.operator_address)}">
-        <label><span>Amount to delegate</span><div class="k-amount-input"><input name="amount" required type="number" min="0.000001" step="0.000001" value="10"><b>KUD</b></div></label>
-        <button class="k-confirm-button" type="submit">Delegate on chain <span>→</span></button>
-      </form>
+    ${panelHeader("BONDED VALIDATOR", validator.name, "Live validator details and staking controls.")}
+    <div class="k-panel-body k-validator-panel">
+      <section class="k-validator-address"><span>VALIDATOR ADDRESS</span><strong>${escapeHtml(validator.operator_address)}</strong></section>
+      <div class="k-validator-metrics">
+        <section class="k-wallet-address-card"><div><span>VOTING POWER</span><strong>${power}</strong><small>${formatKud(Number(validator.tokens) / 1e18)} KUD bonded</small></div></section>
+        <section class="k-wallet-address-card"><div><span>RELIABILITY</span><strong>${reliability}</strong><small>${reliabilityDetail}</small></div></section>
+        <section class="k-wallet-address-card"><div><span>GOVERNANCE ACTIVITY</span><strong>${engagement}</strong><small>Confirmed on-chain participation</small></div></section>
+        <section class="k-wallet-address-card"><div><span>YOUR DELEGATION</span><strong>${formatKud(validator.delegationKud)} KUD</strong><small>Current x/staking balance</small></div></section>
+      </div>
+      <div class="k-validator-actions${delegation > 0 ? " has-undelegate" : ""}">
+        <form class="k-money-form k-validator-action" data-chain-delegate-form data-chain-validator="${escapeHtml(validator.operator_address)}">
+          <header><span>ADD TOKENS</span><small>Increase your delegation to this validator.</small></header>
+          <label><span>Amount to delegate</span><div class="k-amount-input"><input name="amount" required type="number" min="0.000001" step="0.000001" placeholder="0.00"><b>KUD</b></div></label>
+          <button class="k-confirm-button" type="submit">Delegate tokens <span>→</span></button>
+        </form>
+        ${delegation > 0 ? `<form class="k-money-form k-validator-action undelegate" data-chain-undelegate-form data-chain-validator="${escapeHtml(validator.operator_address)}">
+          <header><span>REMOVE TOKENS</span><small>Start the chain unbonding period.</small></header>
+          <label><span>Amount to undelegate</span><div class="k-amount-input"><input name="amount" required type="number" min="0.000001" max="${escapeHtml(validator.delegationKud)}" step="0.000001" placeholder="0.00"><b>KUD</b></div></label>
+          <button class="k-confirm-button secondary" type="submit">Undelegate tokens <span>→</span></button>
+        </form>` : ""}
+      </div>
     </div>`, `Delegate to ${validator.name}`);
 }
 
@@ -1140,12 +1181,15 @@ async function onClick(event) {
     event.stopImmediatePropagation();
     return handleWalletChoice(walletButton);
   }
-  const validatorAction = target.closest("[data-chain-delegate], .validator-row[data-chain-validator]");
+  const validatorRow = target.closest(".validator-row[data-chain-validator]");
+  const validatorAction = validatorRow || target.closest("[data-chain-delegate]");
   if (validatorAction) {
     event.preventDefault();
     event.stopImmediatePropagation();
     if (!account()) return openConnectPanel();
-    return openValidatorPanel(validatorAction.dataset.chainDelegate || validatorAction.dataset.chainValidator);
+    const displayedName = validatorRow?.querySelector(".validator-name strong")?.textContent.trim();
+    const displayedValidator = state.validators.find((validator) => validator.name === displayedName);
+    return openValidatorPanel(displayedValidator?.operator_address || validatorRow?.dataset.chainValidator || validatorAction.dataset.chainDelegate);
   }
   const ask = target.closest("[data-chain-ask]");
   if (ask) {
@@ -1291,6 +1335,16 @@ async function onSubmit(event) {
     await refreshAccount();
     return;
   }
+  if (form.matches("[data-chain-undelegate-form]")) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (!account()) return openConnectPanel();
+    const amount = String(new FormData(form).get("amount"));
+    await transact("Undelegation", () => state.chain.undelegate(form.dataset.chainValidator, amount));
+    closeSidePanel();
+    await refreshAccount();
+    return;
+  }
   if (form.matches(".proposal-form")) {
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -1417,12 +1471,15 @@ async function start() {
       accountAddress: validator.accountAddress,
       delegationAkud: "0",
       delegationKud: "0",
-      delegatorCount: 0,
+      delegatorCount: null,
       jailed: false,
-      powerPercent: Number(validator.powerPercent || 0),
-      reliabilityPercent: 100,
-      yearlyRewardsPercent: 0,
-      tokens: "0",
+      powerPercent: null,
+      reliabilityPercent: null,
+      observedBlocks: null,
+      missedBlocks: null,
+      voteCount: null,
+      proposalCount: null,
+      tokens: null,
     }));
     document.body.dataset.chainValidatorsReady = "true";
     patchChoose();
