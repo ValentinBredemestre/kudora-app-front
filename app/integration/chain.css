@@ -41,6 +41,100 @@
   color: #f4f1f7;
 }
 
+.k-proposal-sort {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 0 16px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.k-proposal-sort > span {
+  flex: 0 0 auto;
+  color: rgba(255, 255, 255, .42);
+  font: 700 8px/1 var(--font-geist-mono, monospace);
+  letter-spacing: .13em;
+}
+
+.k-proposal-sort > div {
+  display: flex;
+  gap: 7px;
+}
+
+.k-proposal-sort button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(255, 255, 255, .55);
+  font: 600 9px/1 var(--font-geist-mono, monospace);
+  cursor: pointer;
+}
+
+.k-proposal-sort button:hover,
+.k-proposal-sort button.active {
+  border-color: rgba(85, 234, 216, .38);
+  background: rgba(85, 234, 216, .07);
+  color: #55ead8;
+}
+
+.k-proposal-sort button i {
+  color: currentColor;
+  font-style: normal;
+}
+
+.your-vote-note {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.k-vote-switch {
+  display: flex !important;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 7px !important;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, .09);
+}
+
+.k-vote-switch > span {
+  margin-right: 5px;
+  color: rgba(255, 255, 255, .42) !important;
+  font: 700 7px/1 var(--font-geist-mono, monospace) !important;
+  letter-spacing: .11em;
+}
+
+.k-vote-switch button {
+  min-height: 30px;
+  padding: 0 11px;
+  border: 1px solid rgba(255, 255, 255, .11);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .025);
+  color: rgba(255, 255, 255, .66);
+  font: 650 9px/1 var(--font-geist-mono, monospace);
+  cursor: pointer;
+}
+
+.k-vote-switch button:hover {
+  border-color: rgba(85, 234, 216, .42);
+  color: #55ead8;
+}
+
+.k-vote-switch button.selected {
+  border-color: rgba(143, 112, 255, .48);
+  background: rgba(143, 112, 255, .13);
+  color: #d8cfff;
+  cursor: default;
+}
+
+.k-chain-checkpoints li > i {
+  flex: 0 0 auto;
+}
+
 .k-chain-proposal-state {
   padding: 0 22px 16px;
   color: rgba(255, 255, 255, .45);
@@ -268,6 +362,18 @@ body:not([data-chain-wallet-connected]) .top-actions .wallet-button::after {
 }
 
 @media (max-width: 760px) {
+  .k-proposal-sort {
+    align-items: flex-start;
+  }
+
+  .k-vote-switch {
+    flex-wrap: wrap;
+  }
+
+  .k-vote-switch > span {
+    flex-basis: 100%;
+  }
+
   .validator-row > :nth-child(4)::before {
     content: "Proposals ";
     color: var(--muted);

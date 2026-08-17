@@ -26,6 +26,7 @@ const state = {
   observer: null,
   observedRoot: null,
   proposalLoading: false,
+  proposalSort: { key: "date", direction: "desc" },
   discussionLoading: new Set(),
   status: { state: "idle", label: "Ready", hash: "" },
 };
@@ -616,12 +617,7 @@ function patchResult(result, proposal) {
 }
 
 function proposalTime(proposal) {
-  const metadata = proposalMetadata(proposal);
-  const submitted = proposal.submit_time ? new Date(proposal.submit_time) : null;
-  const demoHours = Number(metadata.demoHours || 0);
-  const end = demoHours > 0 && submitted && !Number.isNaN(submitted.getTime())
-    ? new Date(submitted.getTime() + demoHours * 3_600_000)
-    : proposal.voting_end_time ? new Date(proposal.voting_end_time) : null;
+  const end = proposal.voting_end_time ? new Date(proposal.voting_end_time) : null;
   if (!end || Number.isNaN(end.getTime())) return String(proposal.status || "ON CHAIN").replace("PROPOSAL_STATUS_", "").replaceAll("_", " ");
   if (end.getTime() <= Date.now()) return String(proposal.status || "CLOSED").replace("PROPOSAL_STATUS_", "").replaceAll("_", " ");
   const hours = Math.max(0, Math.ceil((end.getTime() - Date.now()) / 3_600_000));
@@ -634,6 +630,55 @@ function visibleMessages(proposalId) {
 
 function proposalAnchor(proposalId) {
   return (state.messages.get(String(proposalId)) || []).find((message) => message.parsed?.role === "proposal");
+}
+
+function proposalSortValue(proposal, key) {
+  if (key === "participants") return Number(proposal.participantCount || 0);
+  if (key === "comments") return visibleMessages(proposal.id).length;
+  if (key === "took-part") return Number(proposal.participationPercent || 0);
+  if (key === "useful" || key === "not-useful") {
+    const anchor = proposalAnchor(proposal.id);
+    if (!anchor) return 0;
+    const reactions = reactionState(proposal.id, anchor);
+    return key === "useful" ? reactions.useful : reactions.notUseful;
+  }
+  const date = Date.parse(proposal.voting_end_time || proposal.submit_time || proposal.voting_start_time || "");
+  return Number.isNaN(date) ? Number(proposal.id || 0) : date;
+}
+
+function sortedProposals(proposals) {
+  const multiplier = state.proposalSort.direction === "asc" ? 1 : -1;
+  return [...proposals].sort((left, right) => {
+    const difference = proposalSortValue(left, state.proposalSort.key) - proposalSortValue(right, state.proposalSort.key);
+    if (difference) return difference * multiplier;
+    return Number(right.id || 0) - Number(left.id || 0);
+  });
+}
+
+function patchProposalSort(feed) {
+  let controls = feed.querySelector(".k-proposal-sort");
+  if (!controls) {
+    controls = document.createElement("div");
+    controls.className = "k-proposal-sort";
+    controls.setAttribute("aria-label", "Sort proposals");
+    controls.innerHTML = `<span>SORT BY</span><div>${[
+      ["participants", "Participants"],
+      ["comments", "Comments"],
+      ["date", "Date"],
+      ["took-part", "Took part"],
+      ["useful", "Useful"],
+      ["not-useful", "Not useful"],
+    ].map(([key, label]) => `<button type="button" data-chain-proposal-sort="${key}">${label}<i aria-hidden="true">↕</i></button>`).join("")}</div>`;
+    feed.querySelector(".proposal-table")?.before(controls);
+  }
+  controls.querySelectorAll("[data-chain-proposal-sort]").forEach((button) => {
+    const active = button.dataset.chainProposalSort === state.proposalSort.key;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+    button.setAttribute("aria-label", `${button.textContent.replace(/[↕↑↓]/g, "").trim()}, ${active ? state.proposalSort.direction === "asc" ? "ascending" : "descending" : "not selected"}`);
+    const arrow = button.querySelector("i");
+    if (arrow) arrow.textContent = active ? state.proposalSort.direction === "asc" ? "↑" : "↓" : "↕";
+  });
 }
 
 function validatorNameForVote(voter) {
@@ -744,11 +789,12 @@ function patchProposalSurface() {
   const open = state.proposals.filter((proposal) => proposal.status === "PROPOSAL_STATUS_VOTING_PERIOD").length;
   const count = feed.querySelector(".proposal-feed-toolbar span");
   if (count) count.innerHTML = `<i></i> ${open} OPEN · ${state.proposals.length} TOTAL`;
+  patchProposalSort(feed);
   const labels = [
     ["YOUR ACTIVE VOTES", "Decisions where your wallet took part", "active"],
     ["YOUR REPRESENTATIVES TOOK PART", "Votes cast by bonded validators", "representatives"],
-    ["CLOSING SOON", "Open decisions ordered by their deadline", "closing"],
-    ["MOST DISCUSSED", "Completed decisions with the richest discussion", "most-discussed"],
+    ["OPEN PROPOSALS", "Decisions that are open for a vote", "open"],
+    ["PAST PROPOSALS", "Decisions whose vote has ended", "past"],
   ];
   const grouped = Object.fromEntries(labels.map(([, , key]) => [key, []]));
   const current = account();
@@ -759,11 +805,10 @@ function patchProposalSurface() {
     const representativeVote = (proposal.votes || []).some((vote) => chosenAccounts.has(vote.voter));
     const group = openProposal && ownVote ? "active"
       : openProposal && representativeVote ? "representatives"
-        : openProposal ? "closing" : "most-discussed";
+        : openProposal ? "open" : "past";
     grouped[group].push(proposal);
   }
-  grouped.closing.sort((left, right) => proposalTime(left).localeCompare(proposalTime(right), undefined, { numeric: true }));
-  grouped["most-discussed"].sort((left, right) => visibleMessages(right.id).length - visibleMessages(left.id).length);
+  Object.keys(grouped).forEach((key) => { grouped[key] = sortedProposals(grouped[key]); });
   feed.querySelectorAll(".proposal-group").forEach((group, index) => {
     const [labelText, hintText, key] = labels[index] || labels.at(-1);
     const proposals = grouped[key];
@@ -833,19 +878,27 @@ function findSection(panel, label) {
   return [...panel.querySelectorAll("section")].find((section) => [...section.querySelectorAll("span, small")].some((node) => node.textContent.trim() === label));
 }
 
-async function patchVoteRecord(panel, proposal) {
+function voteOptionNumber(vote) {
+  const option = String(vote?.options?.[0]?.option || "");
+  if (option.endsWith("NO_WITH_VETO")) return 4;
+  if (option.endsWith("NO")) return 3;
+  if (option.endsWith("ABSTAIN")) return 2;
+  if (option.endsWith("YES")) return 1;
+  return 0;
+}
+
+function patchVoteRecord(panel, proposal) {
   const note = panel.querySelector(".your-vote-note");
   if (!note || !account()) return;
-  const signature = `${proposal.id}:${account().cosmosAddress}`;
+  const ownVote = (proposal.votes || []).find((vote) => vote.voter === account().cosmosAddress);
+  const currentOption = voteOptionNumber(ownVote);
+  const open = proposal.status === "PROPOSAL_STATUS_VOTING_PERIOD";
+  const signature = `${proposal.id}:${account().cosmosAddress}:${currentOption}:${open}`;
   if (note.dataset.chainVoteSignature === signature) return;
   note.dataset.chainVoteSignature = signature;
-  try {
-    const record = await state.chain.voteRecord(proposal.id);
-    const option = record.vote?.options?.[0]?.option?.replace("VOTE_OPTION_", "").replaceAll("_", " ") || "Recorded";
-    note.innerHTML = `<span class="your-vote-orb">✓</span><div><span>YOUR CURRENT VOTE</span><strong>${escapeHtml(option)}</strong><small>Read from x/gov</small></div>`;
-  } catch {
-    note.innerHTML = '<span class="your-vote-orb">◇</span><div><span>YOUR CURRENT VOTE</span><strong>Not voted yet</strong><small>Your wallet can vote while the proposal is open.</small></div>';
-  }
+  const options = [[1, "Yes"], [3, "No"], [2, "Abstain"], [4, "Strong no"]];
+  const currentLabel = options.find(([option]) => option === currentOption)?.[1] || "Not voted yet";
+  note.innerHTML = `<span class="your-vote-orb">${currentOption ? "✓" : "◇"}</span><div class="k-current-vote-copy"><span>YOUR CURRENT VOTE</span><strong>${escapeHtml(currentLabel)}</strong><small>${open ? "You can change it until voting closes." : "Voting has ended."}</small></div>${open ? `<div class="k-vote-switch"><span>${currentOption ? "CHANGE TO" : "VOTE NOW"}</span>${options.map(([option, label]) => `<button type="button" data-chain-switch-vote="${option}" class="${option === currentOption ? "selected" : ""}" aria-pressed="${option === currentOption}" ${option === currentOption ? "disabled" : ""}>${label}</button>`).join("")}</div>` : ""}`;
 }
 
 function patchProposalDetail() {
@@ -872,22 +925,32 @@ function patchProposalDetail() {
   if (briefCopy) briefCopy.textContent = proposal.summary;
   const facts = panel.querySelector(".decision-facts");
   if (facts) {
+    const entries = [...facts.querySelectorAll(":scope > span")];
     const author = facts.querySelector(".proposal-author-link");
     if (author) {
       author.disabled = true;
-      author.innerHTML = `<span><strong>${escapeHtml(proposal.proposer ? shortAddress(proposal.proposer) : "On-chain proposer")}</strong><small>Recorded by x/gov</small></span>`;
+      author.innerHTML = `<span><strong>${escapeHtml(proposal.proposer ? shortAddress(proposal.proposer) : "Kudora member")}</strong><small>Public Kudora address</small></span>`;
     }
-    const values = facts.querySelectorAll("strong");
-    if (values.length) values[values.length - 1].textContent = metadata.outcome || proposal.summary;
+    const moneyLabel = entries[1]?.querySelector("small");
+    if (moneyLabel) moneyLabel.textContent = "KUD REQUESTED";
+    const moneyValue = entries[1]?.querySelector(":scope > strong");
+    if (moneyValue) moneyValue.textContent = metadata.requestedAmount || "None";
+    const outcomeLabel = entries[2]?.querySelector("small");
+    if (outcomeLabel) outcomeLabel.textContent = "IF APPROVED";
+    const outcomeValue = entries[2]?.querySelector(":scope > strong");
+    if (outcomeValue) outcomeValue.textContent = metadata.outcome || proposal.summary;
   }
   const visual = findSection(panel, "VISUAL BRIEF");
   if (visual) visual.hidden = true;
   const delivery = findSection(panel, "DELIVERY AND PUBLIC CHECKPOINTS");
   if (delivery) {
-    const list = delivery.querySelector("ol, .proposal-milestones, div:last-child");
+    const list = delivery.querySelector("ol, .proposal-milestones");
     const changes = Array.isArray(metadata.changes) ? metadata.changes : metadata.changes ? [metadata.changes] : [];
-    if (list && changes.length) list.innerHTML = changes.map((change, index) => `<div><span>${String(index + 1).padStart(2, "0")}</span><strong>${escapeHtml(change)}</strong></div>`).join("");
-    else delivery.hidden = true;
+    delivery.hidden = !list || !changes.length;
+    if (list && changes.length) {
+      list.classList.add("k-chain-checkpoints");
+      list.innerHTML = changes.map((change, index) => `<li><i>${String(index + 1).padStart(2, "0")}</i><div><strong>${escapeHtml(change)}</strong><small>Public checkpoint</small></div></li>`).join("");
+    }
   }
   panel.querySelector(".k-proposal-detail-actions")?.setAttribute("hidden", "");
   const vote = [...panel.querySelectorAll("button")].find((button) => /^Vote\b|^Change vote\b/i.test(button.textContent.trim()));
@@ -895,7 +958,8 @@ function patchProposalDetail() {
     vote.dataset.testid = `vote-proposal-${proposal.id}`;
     const open = proposal.status === "PROPOSAL_STATUS_VOTING_PERIOD";
     vote.disabled = !open;
-    if (!open) vote.textContent = "Voting closed";
+    const ownVote = account() && (proposal.votes || []).some((entry) => entry.voter === account().cosmosAddress);
+    vote.innerHTML = open ? `${ownVote ? "Change vote" : "Vote"} <span class="glyph" aria-hidden="true">→</span>` : "Voting closed";
   }
   const discussion = [...panel.querySelectorAll("button")].find((button) => /Open full discussion/i.test(button.textContent));
   if (discussion) {
@@ -1147,6 +1211,33 @@ async function handleWalletChoice(button) {
 async function onClick(event) {
   const target = event.target;
   if (!(target instanceof Element)) return;
+  const proposalSort = target.closest("[data-chain-proposal-sort]");
+  if (proposalSort) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const key = proposalSort.dataset.chainProposalSort;
+    if (state.proposalSort.key === key) {
+      state.proposalSort.direction = state.proposalSort.direction === "desc" ? "asc" : "desc";
+    } else {
+      state.proposalSort = { key, direction: "desc" };
+    }
+    patchProposalSurface();
+    return;
+  }
+  const switchVote = target.closest("[data-chain-switch-vote]");
+  if (switchVote) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (!account()) return openConnectPanel();
+    const proposalId = switchVote.closest("[data-chain-proposal-id]")?.dataset.chainProposalId || state.activeProposal?.id;
+    const proposal = state.proposals.find((candidate) => candidate.id === proposalId);
+    if (!proposal || proposal.status !== "PROPOSAL_STATUS_VOTING_PERIOD") throw new Error("Voting has ended for this proposal");
+    const option = Number(switchVote.dataset.chainSwitchVote);
+    const label = switchVote.textContent.trim();
+    await transact(`${label} vote`, () => state.chain.vote(proposal.id, option));
+    await loadProposals();
+    return;
+  }
   const stakeMode = target.closest("[data-chain-stake-mode]");
   if (stakeMode) {
     event.preventDefault();

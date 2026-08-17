@@ -114,10 +114,10 @@ async function publishProposal(page, title) {
   await panel.getByRole("button", { name: /Change a rule/i }).click();
   const form = page.locator("form.proposal-form");
   await expect(form).toBeVisible();
-  await form.locator("input").nth(0).fill("Community participation");
+  await form.locator("input").nth(0).fill("Community progress updates");
   await form.locator("input").nth(1).fill(title);
-  await form.locator("textarea").nth(0).fill("The current participation rule is not clear enough for every member.");
-  await form.locator("textarea").nth(1).fill("If approved, publish one clear rule and one public checkpoint.");
+  await form.locator("textarea").nth(0).fill("Community progress is difficult to follow when updates are spread across several places.");
+  await form.locator("textarea").nth(1).fill("Publish one short monthly update with an owner, current status and next checkpoint.");
   await performTransaction(page, () => form.locator('button[type="submit"]').click());
   return expect.poll(async () => (await proposals()).find((proposal) => proposal.title === title) || null).not.toBeNull();
 }
@@ -336,6 +336,18 @@ test("Choose and Vote retain the template semantics with on-chain personal data"
   await activity.locator('[aria-label*="Close"], .discussion-back').first().click();
 
   await navigate(page, "Vote");
+  await expect(page.locator(".k-proposal-sort")).toBeVisible();
+  await expect(page.locator(".k-proposal-sort")).toContainText("Participants");
+  await expect(page.locator(".k-proposal-sort")).toContainText("Not useful");
+  await expect(page.locator(".proposal-feed")).not.toContainText("CLOSING SOON");
+  await expect(page.locator(".proposal-feed")).not.toContainText("MOST DISCUSSED");
+  const dateSort = page.locator('[data-chain-proposal-sort="date"]');
+  await expect(dateSort).toHaveAttribute("aria-label", /descending/);
+  const newestFirst = await page.locator(".proposal-group:visible").first().locator(".proposal-list-item:visible").first().getAttribute("data-chain-proposal-id");
+  await dateSort.click();
+  await expect(dateSort).toHaveAttribute("aria-label", /ascending/);
+  const oldestFirst = await page.locator(".proposal-group:visible").first().locator(".proposal-list-item:visible").first().getAttribute("data-chain-proposal-id");
+  expect(oldestFirst).not.toBe(newestFirst);
   await expect(page.locator(".proposal-group:visible").nth(0).locator(":scope > header")).toContainText("YOUR ACTIVE VOTES");
   await expect(page.locator(".proposal-group:visible").nth(0).locator(".proposal-list-item:visible")).toHaveCount(2);
   const times = await page.locator(".proposal-list-item:visible .proposal-list-signal strong").allTextContents();
@@ -433,7 +445,7 @@ test("the canonical Kudora UI drives real EVM and Cosmos business flows", async 
   let evmProposal;
   await test.step("the original proposal builder publishes through the EVM gov precompile", async () => {
     await freshWallet(page, "MetaMask", "alice");
-    const title = `MetaMask proposal ${Date.now()}`;
+    const title = `Publish community progress update #${(await proposals()).length + 1}`;
     await publishProposal(page, title);
     evmProposal = (await proposals()).find((proposal) => proposal.title === title);
     expect(evmProposal).toBeTruthy();
@@ -454,13 +466,21 @@ test("the canonical Kudora UI drives real EVM and Cosmos business flows", async 
     await expect(form).toBeVisible();
     await form.getByRole("button", { name: /Yes\s+I agree/i }).click();
     await performTransaction(page, () => form.locator('button[type="submit"]').click());
-    const vote = await json(`${REST}/cosmos/gov/v1/proposals/${evmProposal.id}/votes/${local.accounts.bob.cosmosAddress}`);
+    let vote = await json(`${REST}/cosmos/gov/v1/proposals/${evmProposal.id}/votes/${local.accounts.bob.cosmosAddress}`);
     expect(vote.vote.options[0].option).toBe("VOTE_OPTION_YES");
+    await expect(page.locator(".your-vote-note")).toContainText("YOUR CURRENT VOTE");
+    await expect(page.locator(".your-vote-note")).toContainText("Yes");
+    await expect(page.locator(".decision-delivery-checkpoints li")).toHaveCount(1);
+    await expect(page.locator(".decision-delivery-checkpoints li")).toContainText("01");
+    await performTransaction(page, () => page.locator('[data-chain-switch-vote="3"]').click());
+    vote = await json(`${REST}/cosmos/gov/v1/proposals/${evmProposal.id}/votes/${local.accounts.bob.cosmosAddress}`);
+    expect(vote.vote.options[0].option).toBe("VOTE_OPTION_NO");
+    await expect(page.locator(".your-vote-note")).toContainText("No");
   });
 
   await test.step("Keplr publishes and MetaMask votes through the same x/gov", async () => {
     await freshWallet(page, "Keplr", "carol");
-    const title = `Keplr proposal ${Date.now()}`;
+    const title = `Open a public delivery tracker #${(await proposals()).length + 1}`;
     await publishProposal(page, title);
     const proposal = (await proposals()).find((item) => item.title === title);
     expect(proposal).toBeTruthy();
