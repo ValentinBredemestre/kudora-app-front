@@ -254,12 +254,15 @@ function contentBytes(content) {
 
 function metadataJson({ title, summary, context, changes, outcome }) {
   // Cosmos SDK 0.54 requires these two fields whenever metadata is a JSON object.
+  const roadmap = changes.split(/\r?\n/)
+    .map((step) => step.replace(/^\s*(?:\d+[.)]|[-*])\s*/, "").trim())
+    .filter(Boolean);
   const metadata = JSON.stringify({
     title: title.trim(),
     summary: summary.trim(),
     v: 1,
     context: context.trim(),
-    changes: [changes.trim()],
+    changes: roadmap.length ? roadmap : [changes.trim()],
     outcome: outcome.trim(),
   });
   if (encoder.encode(metadata).length > METADATA_LIMIT) throw new Error("Proposal metadata exceeds the 8 KiB chain limit");

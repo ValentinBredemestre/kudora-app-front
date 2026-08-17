@@ -917,12 +917,17 @@ function patchVoteRecord(panel, proposal) {
   const ownVote = (proposal.votes || []).find((vote) => vote.voter === account().cosmosAddress);
   const currentOption = voteOptionNumber(ownVote);
   const open = proposal.status === "PROPOSAL_STATUS_VOTING_PERIOD";
+  const voteState = ["pending", "yes", "abstain", "no", "veto"][currentOption] || "pending";
+  note.dataset.voteState = voteState;
   const signature = `${proposal.id}:${account().cosmosAddress}:${currentOption}:${open}`;
   if (note.dataset.chainVoteSignature === signature) return;
   note.dataset.chainVoteSignature = signature;
-  const options = [[1, "Yes"], [3, "No"], [2, "Abstain"], [4, "Strong no"]];
+  const options = [[1, "Yes"], [3, "No"], [2, "Abstain"], [4, "No with veto"]];
   const currentLabel = options.find(([option]) => option === currentOption)?.[1] || "Not voted yet";
-  note.innerHTML = `<span class="your-vote-orb">${currentOption ? "✓" : "◇"}</span><div class="k-current-vote-copy"><span>YOUR CURRENT VOTE</span><strong>${escapeHtml(currentLabel)}</strong><small>${open ? "You can change it until voting closes." : "Voting has ended."}</small></div>${open ? `<div class="k-vote-switch"><span>${currentOption ? "CHANGE TO" : "VOTE NOW"}</span>${options.map(([option, label]) => `<button type="button" data-chain-switch-vote="${option}" class="${option === currentOption ? "selected" : ""}" aria-pressed="${option === currentOption}" ${option === currentOption ? "disabled" : ""}>${label}</button>`).join("")}</div>` : ""}`;
+  const guidance = currentOption
+    ? "Your choice counts directly. You can change it until voting closes."
+    : "Choose below to make your voice count directly.";
+  note.innerHTML = `<span class="your-vote-orb">${currentOption ? "✓" : "◇"}</span><div class="k-current-vote-copy"><span>YOUR CURRENT VOTE</span><strong>${escapeHtml(currentLabel)}</strong><small>${open ? guidance : "Voting has ended."}</small></div>${open ? `<div class="k-vote-switch"><span>${currentOption ? "CHANGE TO" : "VOTE NOW"}</span>${options.map(([option, label]) => `<button type="button" data-chain-switch-vote="${option}" class="${option === currentOption ? "selected" : ""}" aria-pressed="${option === currentOption}" ${option === currentOption ? "disabled" : ""}>${label}</button>`).join("")}</div>` : ""}`;
 }
 
 function patchProposalDetail() {
@@ -964,6 +969,12 @@ function patchProposalDetail() {
     const outcomeValue = entries[2]?.querySelector(":scope > strong");
     if (outcomeValue) outcomeValue.textContent = metadata.outcome || proposal.summary;
   }
+  if (account() && proposal.status === "PROPOSAL_STATUS_VOTING_PERIOD" && !panel.querySelector(".your-vote-note")) {
+    const note = document.createElement("aside");
+    note.className = "your-vote-note k-injected-vote-note";
+    note.setAttribute("aria-label", "Manage your vote");
+    facts?.after(note);
+  }
   const visual = findSection(panel, "VISUAL BRIEF");
   if (visual) visual.hidden = true;
   const delivery = findSection(panel, "DELIVERY AND PUBLIC CHECKPOINTS");
@@ -984,6 +995,9 @@ function patchProposalDetail() {
     vote.disabled = !open;
     const ownVote = account() && (proposal.votes || []).some((entry) => entry.voter === account().cosmosAddress);
     vote.innerHTML = open ? `${ownVote ? "Change vote" : "Vote"} <span class="glyph" aria-hidden="true">→</span>` : "Voting closed";
+    const managedAbove = Boolean(account() && panel.querySelector(".your-vote-note"));
+    vote.hidden = managedAbove;
+    vote.closest(".decision-primary-actions")?.classList.toggle("k-vote-managed", managedAbove);
   }
   const discussion = [...panel.querySelectorAll("button")].find((button) => /Open full discussion/i.test(button.textContent));
   if (discussion) {
@@ -991,8 +1005,14 @@ function patchProposalDetail() {
     const count = visibleMessages(proposal.id).length;
     discussion.innerHTML = `Open full discussion <small>${count}</small> <span class="glyph">→</span>`;
   }
+  const override = panel.querySelector(".override-note");
+  if (override) {
+    override.classList.add("k-direct-vote-note");
+    override.innerHTML = '<span class="glyph" aria-hidden="true">◇</span><span><strong>Your choice counts directly.</strong><small>When you vote, your choice replaces your representatives’ votes for this proposal only.</small></span>';
+  }
   patchVoteRecord(panel, proposal);
   loadDiscussion(proposal.id);
+  patchDiscussionPreview();
 }
 
 function patchVotePanel() {
@@ -1037,8 +1057,8 @@ function proposalFields(form) {
     || "Kudora proposal";
   const previewParagraphs = [...(preview?.querySelectorAll("p") || [])].map((node) => node.textContent.trim()).filter(Boolean);
   const summary = previewParagraphs[0] || textareas[0] || title;
-  const outcomeNode = [...(panel?.querySelectorAll("small, span") || [])].find((node) => node.textContent.trim() === "IF APPROVED")?.parentElement;
-  const outcome = outcomeNode?.querySelector("p, strong")?.textContent.trim() || textareas.at(-1) || summary;
+  const action = title.charAt(0).toLowerCase() + title.slice(1).replace(/[.!?]+$/, "");
+  const outcome = `Kudora will ${action}. Progress and the final result will be published at the checkpoints below.`;
   const context = textareas[0] || summary;
   const changes = textareas[1] || outcome;
   return { title, summary, context, changes, outcome };
@@ -1141,13 +1161,36 @@ function patchDiscussionPreview() {
       return;
     }
     article.hidden = false;
+    article.dataset.chainMessageId = message.messageId;
+    article.dataset.testid = `message-preview-${message.messageId}`;
     const author = article.querySelector("header strong");
     const copy = article.querySelector("p");
-    const useful = article.querySelector("footer, article > div > span");
     if (author) author.textContent = accountName(message.evmAuthor);
     if (copy) copy.textContent = message.parsed.text || message.parsed.title || "On-chain contribution";
-    if (useful) useful.textContent = `◇ ${reactionState(proposal.id, message).useful} found this useful`;
-    article.querySelectorAll(".discussion-status").forEach((node) => node.remove());
+    const authorVote = (proposal.votes || []).find((vote) => vote.voter === message.cosmosAuthor);
+    const choice = authorVote ? voteLabel(authorVote) : message.parsed.vote || "";
+    const header = article.querySelector("header");
+    let status = header?.querySelector(".discussion-status");
+    if (choice && header) {
+      if (!status) {
+        status = document.createElement("em");
+        header.append(status);
+      }
+      status.className = `discussion-status discussion-vote-status ${choice.toLowerCase().replaceAll(" ", "-")}`;
+      status.innerHTML = `<i>◆</i>${escapeHtml(choice)}`;
+      status.setAttribute("aria-label", `Voted ${choice}`);
+    } else status?.remove();
+    const reactions = reactionState(proposal.id, message);
+    let footer = article.querySelector("footer");
+    if (!footer) {
+      footer = document.createElement("footer");
+      article.querySelector(":scope > div")?.append(footer);
+    }
+    footer.innerHTML = `<span class="k-reaction-bar compact">
+      <button type="button" class="k-reaction ${reactions.own === 1 ? "active useful" : ""}" data-chain-reaction="1"><span>◇</span> Useful <b>${reactions.useful}</b></button>
+      <button type="button" class="k-reaction ${reactions.own === 2 ? "active not-useful" : ""}" data-chain-reaction="2"><span>×</span> Not useful <b>${reactions.notUseful}</b></button>
+      <button type="button" class="k-reaction zap" data-chain-zap><span>ϟ</span> Zap <b>KUD</b></button>
+    </span><button type="button" data-chain-reply>↳ Reply</button>`;
   });
 }
 
@@ -1390,8 +1433,16 @@ async function onClick(event) {
     event.preventDefault();
     event.stopImmediatePropagation();
     state.parentId = Number(reply.closest("[data-chain-message-id]").dataset.chainMessageId);
-    patchDiscussionPanel();
-    document.querySelector(".discussion-composer textarea")?.focus();
+    const focusComposer = () => {
+      patchDiscussionPanel();
+      document.querySelector(".discussion-composer textarea")?.focus();
+    };
+    const composer = document.querySelector(".discussion-composer textarea");
+    if (composer) focusComposer();
+    else {
+      document.querySelector(`[data-testid="discussion-proposal-${state.activeProposal.id}"]`)?.click();
+      window.setTimeout(focusComposer, 80);
+    }
     return;
   }
   const zap = target.closest("[data-chain-zap]");
