@@ -277,23 +277,34 @@
 
 .k-chain-session-controls {
   align-items: center;
-  margin-bottom: 12px;
-  padding: 12px 14px;
+  grid-column: 1 / -1;
+  width: 100%;
+  margin: 0 0 2px;
+  padding: 10px 12px;
   border: 1px solid rgba(255, 255, 255, .1);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, .025);
+  border-radius: 11px;
+  background: linear-gradient(90deg, rgba(216, 48, 162, .06), rgba(85, 232, 212, .025));
 }
 
 .k-chain-session-controls > span {
-  display: grid;
-  gap: 3px;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
   margin-right: auto;
 }
 
 .k-chain-session-controls strong,
 .k-chain-reply-context {
   color: rgba(255, 255, 255, .72);
-  font-size: 12px;
+  font-size: 10px;
+}
+
+.k-chain-session-controls button {
+  flex: 0 0 auto;
+  min-height: 31px;
+  padding: 0 13px;
+  white-space: nowrap;
 }
 
 .k-chain-reply-context {
@@ -307,6 +318,22 @@
   gap: 6px;
   margin: 12px 0 0;
   padding-left: 22px;
+}
+
+@media (max-width: 760px) {
+  .k-chain-session-controls {
+    align-items: stretch;
+    padding: 10px;
+  }
+
+  .k-chain-session-controls > span {
+    display: grid;
+    gap: 4px;
+  }
+
+  .k-chain-session-controls button {
+    min-height: 34px;
+  }
 }
 body:not([data-chain-data-ready]) .network-metric,
 body:not([data-chain-data-ready]) .proposal-list-item,

@@ -1208,7 +1208,7 @@ function patchDiscussionPanel() {
   if (label) label.textContent = `KIP–${proposal.id} / DISCUSSION`;
   const messages = visibleMessages(proposal.id);
   const count = panel.querySelector(".discussion-thread-heading small");
-  if (count) count.textContent = `${messages.length} comments`;
+  if (count) count.textContent = `${messages.length} ${messages.length === 1 ? "comment" : "comments"}`;
   const thread = panel.querySelector(".discussion-thread");
   if (thread) thread.innerHTML = messages.length
     ? messages.map((message) => renderMessage(proposal.id, message)).join("")

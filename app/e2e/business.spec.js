@@ -378,6 +378,36 @@ test("Choose and Vote retain the template semantics with on-chain personal data"
   await expect(detail).not.toContainText("Strong no");
 });
 
+test("the discussion composer keeps every control on a clear full-width row", async ({ page }) => {
+  await freshWallet(page, "MetaMask", "alice");
+  await navigate(page, "Vote");
+  await page.locator(".proposal-list-item:visible").first().click();
+  await page.getByRole("button", { name: /Open full discussion/i }).click();
+
+  const composer = page.getByTestId("discussion-form");
+  const quickInteractions = page.getByTestId("quick-interactions");
+  const tools = composer.locator(".comment-starters");
+  const input = composer.locator("label").last();
+  const [composerBox, quickBox, toolsBox, inputBox] = await Promise.all([
+    composer.boundingBox(),
+    quickInteractions.boundingBox(),
+    tools.boundingBox(),
+    input.boundingBox(),
+  ]);
+  expect(quickBox.width).toBeGreaterThan(composerBox.width * 0.8);
+  expect(quickBox.height).toBeLessThan(90);
+  expect(quickBox.y).toBeLessThan(toolsBox.y);
+  expect(toolsBox.y).toBeLessThan(inputBox.y);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const [mobilePanelBox, mobileQuickBox] = await Promise.all([
+    page.locator(".discussion-panel").boundingBox(),
+    quickInteractions.boundingBox(),
+  ]);
+  expect(mobileQuickBox.x).toBeGreaterThanOrEqual(mobilePanelBox.x);
+  expect(mobileQuickBox.x + mobileQuickBox.width).toBeLessThanOrEqual(mobilePanelBox.x + mobilePanelBox.width);
+});
+
 test("the canonical Kudora UI drives real EVM and Cosmos business flows", async ({ page }) => {
   const local = await config();
   const errors = [];
@@ -526,6 +556,7 @@ test("the canonical Kudora UI drives real EVM and Cosmos business flows", async 
     let form = page.getByTestId("discussion-form");
     await form.locator("textarea").first().fill(rootText);
     await performTransaction(page, () => form.locator('button[type="submit"]').click());
+    await expect(page.locator(".discussion-thread-heading small")).toHaveText("1 comment");
     rootMessage = (await discussionMessages(evmProposal.id)).find((message) => messageText(message) === rootText);
     expect(rootMessage).toBeTruthy();
 
