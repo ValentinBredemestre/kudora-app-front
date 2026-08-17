@@ -633,6 +633,8 @@ function proposalAnchor(proposalId) {
 }
 
 function proposalSortValue(proposal, key) {
+  if (key === "title") return String(proposal.title || "");
+  if (key === "result") return tallyPercentages(proposal)[0];
   if (key === "participants") return Number(proposal.participantCount || 0);
   if (key === "comments") return visibleMessages(proposal.id).length;
   if (key === "took-part") return Number(proposal.participationPercent || 0);
@@ -649,33 +651,40 @@ function proposalSortValue(proposal, key) {
 function sortedProposals(proposals) {
   const multiplier = state.proposalSort.direction === "asc" ? 1 : -1;
   return [...proposals].sort((left, right) => {
-    const difference = proposalSortValue(left, state.proposalSort.key) - proposalSortValue(right, state.proposalSort.key);
-    if (difference) return difference * multiplier;
+    const leftValue = proposalSortValue(left, state.proposalSort.key);
+    const rightValue = proposalSortValue(right, state.proposalSort.key);
+    const comparison = typeof leftValue === "string"
+      ? leftValue.localeCompare(rightValue, undefined, { sensitivity: "base" })
+      : leftValue - rightValue;
+    if (comparison) return comparison * multiplier;
     return Number(right.id || 0) - Number(left.id || 0);
   });
 }
 
 function patchProposalSort(feed) {
-  let controls = feed.querySelector(".k-proposal-sort");
-  if (!controls) {
-    controls = document.createElement("div");
-    controls.className = "k-proposal-sort";
-    controls.setAttribute("aria-label", "Sort proposals");
-    controls.innerHTML = `<span>SORT BY</span><div>${[
-      ["participants", "Participants"],
-      ["comments", "Comments"],
-      ["date", "Date"],
-      ["took-part", "Took part"],
-      ["useful", "Useful"],
-      ["not-useful", "Not useful"],
-    ].map(([key, label]) => `<button type="button" data-chain-proposal-sort="${key}">${label}<i aria-hidden="true">↕</i></button>`).join("")}</div>`;
-    feed.querySelector(".proposal-table")?.before(controls);
+  feed.querySelector(".k-proposal-sort")?.remove();
+  const head = feed.querySelector(".proposal-table-head");
+  if (!head) return;
+  const columns = [
+    ["title", "Proposal"],
+    ["date", "Closes"],
+    ["result", "Current result"],
+    ["participants", "Participants"],
+    ["comments", "Comments"],
+    ["took-part", "Took part"],
+    ["useful", "Useful"],
+    ["not-useful", "Not useful"],
+  ];
+  if (head.dataset.chainColumns !== "true") {
+    head.dataset.chainColumns = "true";
+    head.innerHTML = `${columns.map(([key, label]) => `<button type="button" role="columnheader" data-chain-proposal-sort="${key}"><span>${label}</span><i aria-hidden="true">↕</i></button>`).join("")}<span aria-hidden="true"></span>`;
   }
-  controls.querySelectorAll("[data-chain-proposal-sort]").forEach((button) => {
+  head.querySelectorAll("[data-chain-proposal-sort]").forEach((button) => {
     const active = button.dataset.chainProposalSort === state.proposalSort.key;
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", String(active));
-    button.setAttribute("aria-label", `${button.textContent.replace(/[↕↑↓]/g, "").trim()}, ${active ? state.proposalSort.direction === "asc" ? "ascending" : "descending" : "not selected"}`);
+    const label = button.querySelector("span")?.textContent || "Column";
+    button.setAttribute("aria-label", `${label}, ${active ? state.proposalSort.direction === "asc" ? "ascending" : "descending" : "select to sort"}`);
     const arrow = button.querySelector("i");
     if (arrow) arrow.textContent = active ? state.proposalSort.direction === "asc" ? "↑" : "↓" : "↕";
   });
@@ -709,6 +718,8 @@ function patchProposalArticle(article, proposal) {
   }
   const personal = article.querySelector(".personal-choice");
   const ownVote = account() ? (proposal.votes || []).find((vote) => vote.voter === account().cosmosAddress) : null;
+  const anchor = proposalAnchor(proposal.id);
+  const reactions = anchor ? reactionState(proposal.id, anchor) : { useful: 0, notUseful: 0, own: 0 };
   if (personal) {
     personal.hidden = !ownVote;
     const choice = personal.querySelector(".vote-label");
@@ -721,11 +732,22 @@ function patchProposalArticle(article, proposal) {
   patchResult(article.querySelector(".proposal-result"), proposal);
   const engagement = article.querySelector(".proposal-engagement");
   if (engagement) {
-    const values = engagement.querySelectorAll("strong");
-    if (values[0]) values[0].textContent = String(proposal.participantCount || 0);
-    if (values[1]) values[1].textContent = String(visibleMessages(proposal.id).length);
-    if (values[2]) values[2].textContent = `${Number(proposal.participationPercent || 0).toFixed(1)}%`;
-    engagement.querySelectorAll("small").forEach((node, index) => { node.textContent = ["participants", "comments", "took part"][index] || ""; });
+    const metrics = [
+      ["participants", String(proposal.participantCount || 0)],
+      ["comments", String(visibleMessages(proposal.id).length)],
+      ["took part", `${Number(proposal.participationPercent || 0).toFixed(1)}%`],
+      ["useful", String(reactions.useful)],
+      ["not useful", String(reactions.notUseful)],
+    ];
+    if (engagement.dataset.chainMetrics !== "true") {
+      engagement.dataset.chainMetrics = "true";
+      engagement.innerHTML = metrics.map(([label]) => `<span><strong></strong><small>${label}</small></span>`).join("");
+    }
+    engagement.querySelectorAll(":scope > span").forEach((metric, index) => {
+      const [label, value] = metrics[index];
+      metric.querySelector("strong").textContent = value;
+      metric.querySelector("small").textContent = label;
+    });
   }
   const peek = article.querySelector(".proposal-representative-peek");
   if (peek) {
@@ -768,11 +790,9 @@ function patchProposalArticle(article, proposal) {
     actions.className = "k-proposal-actions k-chain-proposal-state";
     article.append(actions);
   }
-  const anchor = proposalAnchor(proposal.id);
   if (!anchor) {
     actions.innerHTML = "<small>Community signals will appear when the first on-chain signal is created.</small>";
   } else {
-    const reactions = reactionState(proposal.id, anchor);
     actions.dataset.chainMessageId = anchor.messageId;
     actions.innerHTML = `<span class="k-reaction-bar">
       <button type="button" class="k-reaction ${reactions.own === 1 ? "active useful" : ""}" data-chain-proposal-reaction="1"><span>◇</span> Useful <b>${reactions.useful}</b></button>
@@ -793,7 +813,7 @@ function patchProposalSurface() {
   const labels = [
     ["YOUR ACTIVE VOTES", "Decisions where your wallet took part", "active"],
     ["YOUR REPRESENTATIVES TOOK PART", "Votes cast by bonded validators", "representatives"],
-    ["OPEN PROPOSALS", "Decisions that are open for a vote", "open"],
+    ["", "", "open"],
     ["PAST PROPOSALS", "Decisions whose vote has ended", "past"],
   ];
   const grouped = Object.fromEntries(labels.map(([, , key]) => [key, []]));
@@ -809,6 +829,8 @@ function patchProposalSurface() {
     grouped[group].push(proposal);
   }
   Object.keys(grouped).forEach((key) => { grouped[key] = sortedProposals(grouped[key]); });
+  const table = feed.querySelector(".proposal-table");
+  if (table) table.setAttribute("aria-label", `${state.proposals.length} proposals`);
   feed.querySelectorAll(".proposal-group").forEach((group, index) => {
     const [labelText, hintText, key] = labels[index] || labels.at(-1);
     const proposals = grouped[key];
@@ -823,6 +845,8 @@ function patchProposalSurface() {
     });
     const visible = articles.some((article) => !article.hidden);
     group.hidden = !visible;
+    const groupHeader = group.querySelector(":scope > header");
+    if (groupHeader) groupHeader.hidden = key === "open";
     if (visible) {
       const label = group.querySelector(":scope > header span");
       const hint = group.querySelector(":scope > header small");

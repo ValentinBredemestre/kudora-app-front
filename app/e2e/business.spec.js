@@ -336,9 +336,11 @@ test("Choose and Vote retain the template semantics with on-chain personal data"
   await activity.locator('[aria-label*="Close"], .discussion-back').first().click();
 
   await navigate(page, "Vote");
-  await expect(page.locator(".k-proposal-sort")).toBeVisible();
-  await expect(page.locator(".k-proposal-sort")).toContainText("Participants");
-  await expect(page.locator(".k-proposal-sort")).toContainText("Not useful");
+  await expect(page.locator(".proposal-table-head")).toBeVisible();
+  await expect(page.locator(".proposal-table-head")).toContainText("Participants");
+  await expect(page.locator(".proposal-table-head")).toContainText("Not useful");
+  await expect(page.locator(".proposal-table-head")).not.toContainText("Activity");
+  await expect(page.locator(".proposal-feed")).not.toContainText("OPEN PROPOSALS");
   await expect(page.locator(".proposal-feed")).not.toContainText("CLOSING SOON");
   await expect(page.locator(".proposal-feed")).not.toContainText("MOST DISCUSSED");
   const dateSort = page.locator('[data-chain-proposal-sort="date"]');
