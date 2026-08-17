@@ -250,7 +250,7 @@ test("seeded account activity contains real rewards, payments and moves", async 
       return window.KudoraChain.transactions();
     }, name);
     expect(transactions.find((transaction) => transaction.category === "Rewards")?.amount).toBeCloseTo(amounts.reward);
-    expect(transactions.find((transaction) => transaction.category === "Moved")?.amount).toBeCloseTo(amounts.move);
+    expect(transactions.some((transaction) => transaction.category === "Moved" && Math.abs(transaction.amount - amounts.move) < 0.000001)).toBe(true);
     expect(transactions.some((transaction) => transaction.category === "Sent" && Math.abs(transaction.amount - amounts.sent) < 0.000001)).toBe(true);
     expect(transactions.some((transaction) => transaction.category === "Received" && Math.abs(transaction.amount - amounts.received) < 0.000001)).toBe(true);
   }
@@ -261,8 +261,12 @@ test("seeded account activity contains real rewards, payments and moves", async 
   await expect(page.locator(".k-transaction-row").first()).toContainText("Airdrop reward from Kudora Validator 1");
   await expect(page.locator(".k-transaction-row").first()).toContainText("+125.50");
   await page.locator('[data-transaction-filter="Moved"]').click();
-  await expect(page.locator(".k-transaction-row").first()).toContainText("KUD moved to Mock USDC");
-  await expect(page.locator(".k-transaction-row").first()).toContainText("−2.00");
+  const seededMove = page.locator(".k-transaction-row").filter({ hasText: "−2.00 KUD" });
+  await expect(seededMove).toContainText("KUD moved to Mock USDC");
+  await page.locator('[data-transaction-filter="Community"]').click();
+  const communityCost = page.locator(".k-transaction-row").first().locator(".k-transaction-amount");
+  await expect(communityCost).toContainText(/Fee −0\.[0-9]+ KUD/);
+  await expect(communityCost).not.toContainText("On-chain");
 });
 
 test("Choose and Vote retain the template semantics with on-chain personal data", async ({ page }) => {

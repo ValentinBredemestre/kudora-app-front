@@ -45,6 +45,14 @@ function formatKud(value) {
   return `${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} KUD`;
 }
 
+function formatFee(value, withLabel = false) {
+  const fee = Math.abs(Number(value));
+  if (!Number.isFinite(fee) || fee <= 0) return withLabel ? "Fee unavailable" : "Unavailable";
+  if (fee < 0.000001) return withLabel ? "Fee ≈0 KUD" : "≈0 KUD";
+  const formatted = fee.toLocaleString("en-US", { maximumFractionDigits: 6 });
+  return withLabel ? `Fee −${formatted} KUD` : `${formatted} KUD`;
+}
+
 function showToast(message) {
   let toast = document.querySelector(".k-toast");
   if (!toast) {
@@ -382,7 +390,7 @@ function renderTransactions() {
       <span class="k-transaction-icon ${transaction.amount > 0 ? "incoming" : "outgoing"}">${escapeHtml(transaction.icon)}</span>
       <span class="k-transaction-copy"><strong>${escapeHtml(transaction.title)}</strong><small>${escapeHtml(transaction.note)}</small></span>
       <span class="k-transaction-date"><strong>${escapeHtml(transaction.date)}</strong><small>${escapeHtml(transaction.category)}</small></span>
-      <span class="k-transaction-amount ${transaction.amount > 0 ? "positive" : ""}">${transaction.amount === 0 ? "On-chain" : `${transaction.amount > 0 ? "+" : "−"}${formatKud(Math.abs(transaction.amount))}`}<small>${escapeHtml(transaction.status)}</small></span>
+      <span class="k-transaction-amount ${transaction.amount > 0 ? "positive" : ""}">${transaction.amount === 0 ? formatFee(transaction.fee, true) : `${transaction.amount > 0 ? "+" : "−"}${formatKud(Math.abs(transaction.amount))}`}<small>${escapeHtml(transaction.status)}</small></span>
       <span class="glyph">→</span>
     </button>`).join("") + (visible.length < transactions.length ? `
       <button type="button" class="k-load-movements" data-load-transactions>
@@ -501,12 +509,12 @@ function openTransactionPanel(transaction) {
   const panel = panelShell(`
     ${panelHeader(transaction.category.toUpperCase(), transaction.title, "A clear summary of this movement.")}
     <div class="k-panel-body">
-      <div class="k-detail-amount ${transaction.amount > 0 ? "positive" : ""}">${transaction.amount === 0 ? "On-chain" : `${transaction.amount > 0 ? "+" : "−"}${formatKud(Math.abs(transaction.amount))}`}<small>${escapeHtml(transaction.status)}</small></div>
+      <div class="k-detail-amount ${transaction.amount > 0 ? "positive" : ""}">${transaction.amount === 0 ? formatFee(transaction.fee, true) : `${transaction.amount > 0 ? "+" : "−"}${formatKud(Math.abs(transaction.amount))}`}<small>${escapeHtml(transaction.status)}</small></div>
       <section class="k-plain-explanation"><span>WHAT HAPPENED</span><p>${escapeHtml(transaction.explanation)}</p></section>
       <dl class="k-detail-list">
         <div><dt>When</dt><dd>${escapeHtml(transaction.date)}</dd></div>
         <div><dt>Category</dt><dd>${escapeHtml(transaction.category)}</dd></div>
-        <div><dt>Cost of the movement</dt><dd>${formatKud(transaction.fee)}</dd></div>
+        <div><dt>Network fee</dt><dd>${formatFee(transaction.fee)}</dd></div>
         <div><dt>Reference</dt><dd>${escapeHtml(transaction.note)}</dd></div>
       </dl>
       <div class="k-safe-note"><span>✓</span><p><strong>Complete and recorded.</strong> You do not need a transaction code or network address to understand this movement.</p></div>
