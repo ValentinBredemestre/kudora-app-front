@@ -340,13 +340,6 @@ function accountMarkup() {
           </aside>
         </section>
 
-        <aside class="k-money-guide glass-card">
-          <div class="k-money-guide-heading"><span class="tiny-label">ON-CHAIN ACTIVITY</span><h3>How your KUD moved</h3></div>
-          <div class="k-category-cell"><div class="k-category-row"><span><i class="pink"></i>Zaps</span><b>36.00 KUD</b></div><div class="k-category-bar"><i style="width:62%"></i></div></div>
-          <div class="k-category-cell"><div class="k-category-row"><span><i class="cyan"></i>People & teams</span><b>24.00 KUD</b></div><div class="k-category-bar cyan"><i style="width:41%"></i></div></div>
-          <div class="k-category-cell" title="Funding, swaps and transfers between accounts you own"><div class="k-category-row"><span><i class="violet"></i>Own accounts & swaps</span><b>120.00 KUD</b></div><div class="k-category-bar violet"><i style="width:78%"></i></div></div>
-        </aside>
-
         <section class="k-account-layout">
           <article class="k-activity-card glass-card">
             <header class="k-activity-heading">
@@ -522,14 +515,12 @@ function openTransactionPanel(transaction) {
     ${panelHeader(transaction.category.toUpperCase(), transaction.title, "A clear summary of this movement.")}
     <div class="k-panel-body">
       <div class="k-detail-amount ${transactionDirection(transaction)}">${transactionAmount(transaction)}<small>${escapeHtml(transaction.status)}</small></div>
-      <section class="k-plain-explanation"><span>WHAT HAPPENED</span><p>${escapeHtml(transaction.explanation)}</p></section>
       <dl class="k-detail-list">
         <div><dt>Network</dt><dd>${escapeHtml(transaction.network || "Kudora")}</dd></div>
         <div><dt>Category</dt><dd>${escapeHtml(transaction.category)}</dd></div>
         <div><dt>Network fee</dt><dd>${formatApproxKud(transaction.fee)}</dd></div>
         <div><dt>Reference</dt><dd>${escapeHtml(transaction.reference || transaction.hash || transaction.note)}</dd></div>
       </dl>
-      <div class="k-safe-note"><span>✓</span><p><strong>Complete and recorded.</strong> You do not need a transaction code or network address to understand this movement.</p></div>
     </div>`, transaction.title);
   bindPanelClose(panel);
 }
@@ -552,7 +543,7 @@ function openMoneyPanel(action) {
         <div class="k-tag-help" hidden><span>TAG</span><p>A tag is a public address, not a username. Ask the person to open their connected wallet and tap <b>Copy tag</b>. This avoids paying the wrong person with a similar name.</p></div>
         <label><span>Amount</span><div class="k-amount-input"><input name="amount" required type="number" min="0.01" step="0.01" placeholder="0.00"><b>KUD</b></div></label>
         <label><span>Note <small>optional</small></span><input name="note" placeholder="What is this for?"></label>
-        <div class="k-cost-preview"><span>You send</span><b data-live-amount>0.00 KUD</b><span>Movement cost</span><b>0.01 KUD</b></div>
+        <div class="k-cost-preview"><span>You send</span><b data-live-amount>0.00 KUD</b><span>Network fee</span><b>0.01 KUD</b></div>
         <button class="k-confirm-button" type="submit">Review and send <span>→</span></button>
       </form>`,
     },
@@ -572,7 +563,7 @@ function openMoneyPanel(action) {
         </div>
         <label><span>How much do you want to move?</span><div class="k-amount-input"><input name="amount" required type="number" min="1" step="0.01" placeholder="0.00"><b>KUD</b></div></label>
         <div class="k-plain-explanation compact"><span>WHAT YOU WILL RECEIVE</span><p><b data-receive-amount>0.00 KUD</b> in your <span data-receive-account>Ethereum account</span> · usually under 2 minutes</p></div>
-        <div class="k-cost-preview"><span>Movement cost</span><b>0.28 KUD</b><span>Rate</span><b>1 KUD = 1 KUD</b></div>
+        <div class="k-cost-preview"><span>Network fee</span><b>0.28 KUD</b><span>Rate</span><b>1 KUD = 1 KUD</b></div>
         <button class="k-confirm-button" type="submit">Review the move <span>→</span></button>
       </form>`,
     },
@@ -653,10 +644,10 @@ function bindMoneyForm(panel, action) {
     const destination = form.dataset.destination || "Ethereum";
     const incoming = form.dataset.direction === "in";
     const transaction = action === "send"
-      ? { id: `sent-${Date.now()}`, category: "Sent", icon: "↑", title: `Money sent to ${data.get("recipient")}`, note: data.get("note") || "Direct payment", date: "Just now", amount: -value, fee: .01, status: "Completed", explanation: `You sent money directly to ${data.get("recipient")}.` }
+      ? { id: `sent-${Date.now()}`, category: "Sent", icon: "↑", title: `Money sent to ${data.get("recipient")}`, note: data.get("note") || "Direct payment", date: "Just now", amount: -value, fee: .01, status: "Completed" }
       : action === "move"
-        ? { id: `moved-${Date.now()}`, category: "Moved", icon: "⇄", title: incoming ? `Moved from your ${destination} account` : `Moved to your ${destination} account`, note: incoming ? `${destination} → Kudora` : `Kudora → ${destination}`, date: "Just now", amount: incoming ? value : -value, fee: .28, status: "Completed", explanation: incoming ? `You moved money from your ${destination} account into Kudora, like moving money between two banks.` : `You moved money from your Kudora account to your ${destination} account, like moving money between two banks.` }
-        : { id: `added-${Date.now()}`, category: "Received", icon: "↓", title: "Money added to Kudora", note: "From your payment card", date: "Just now", amount: value, fee: 1.2, status: "Completed", explanation: "You added money to your Kudora account from a connected payment method." };
+        ? { id: `moved-${Date.now()}`, category: "Moved", icon: "⇄", title: incoming ? `Moved from your ${destination} account` : `Moved to your ${destination} account`, note: incoming ? `${destination} → Kudora` : `Kudora → ${destination}`, date: "Just now", amount: incoming ? value : -value, fee: .28, status: "Completed" }
+        : { id: `added-${Date.now()}`, category: "Received", icon: "↓", title: "Money added to Kudora", note: "From your payment card", date: "Just now", amount: value, fee: 1.2, status: "Completed" };
     state.transactions.unshift(transaction);
     saveState();
     closePanel();
@@ -673,7 +664,7 @@ function openZapPanel(target, key, bar) {
         <div class="k-zap-person"><span class="representative-avatar portrait-civic"></span><div><small>YOU ARE THANKING</small><strong>${escapeHtml(target)}</strong></div></div>
         <fieldset><legend>Choose a small amount</legend><div class="k-zap-amounts">${[0.1, 0.5, 1, 2].map((amount, index) => `<button type="button" class="${index === 1 ? "selected" : ""}" data-zap-amount="${amount}">${amount} KUD</button>`).join("")}</div></fieldset>
         <label><span>Or enter another amount</span><div class="k-amount-input"><input name="amount" type="number" min="0.01" step="0.01" value="0.5"><b>KUD</b></div></label>
-        <div class="k-cost-preview"><span>${escapeHtml(target)} receives</span><b data-zap-receives>0.50 KUD</b><span>Movement cost</span><b>0.01 KUD</b></div>
+        <div class="k-cost-preview"><span>${escapeHtml(target)} receives</span><b data-zap-receives>0.50 KUD</b><span>Network fee</span><b>0.01 KUD</b></div>
         <button class="k-confirm-button zap" type="submit">Zap ${escapeHtml(target)} <span>ϟ</span></button>
       </form>
     </div>`, `Zap ${target}`);
@@ -694,7 +685,7 @@ function openZapPanel(target, key, bar) {
     const current = state.reactions[key] || {};
     current.zapTotal = Number(current.zapTotal || 0) + amount;
     state.reactions[key] = current;
-    state.transactions.unshift({ id: `zap-${Date.now()}`, category: "Community", icon: "ϟ", title: `Zap to ${target}`, note: "Thanks for something useful", date: "Just now", amount: -amount, fee: .01, status: "Completed", explanation: `You thanked ${target} with a small amount of KUD for something useful.` });
+    state.transactions.unshift({ id: `zap-${Date.now()}`, category: "Community", icon: "ϟ", title: `Zap to ${target}`, note: "Thanks for something useful", date: "Just now", amount: -amount, fee: .01, status: "Completed" });
     saveState();
     closePanel();
     renderReactionBar(bar);

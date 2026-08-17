@@ -227,28 +227,6 @@ function patchAccount() {
   const delegated = state.validators.reduce((sum, validator) => sum + Number(validator.delegationKud || 0), 0);
   if (values[1]) values[1].textContent = connected ? `${formatKud(delegated)} KUD` : "—";
   if (values[2]) values[2].textContent = connected ? `${formatKud(state.rewards)} KUD` : "—";
-  patchMoneyGuide();
-}
-
-function patchMoneyGuide() {
-  const guide = document.querySelector("#kudora-account-root .k-money-guide");
-  if (!guide) return;
-  const totals = { Community: 0, Sent: 0, Moved: 0 };
-  for (const transaction of state.transactions) {
-    if (transaction.category === "Community" && transaction.amount < 0) totals.Community += Math.abs(transaction.amount);
-    else if (transaction.category === "Sent" && transaction.amount < 0) totals.Sent += Math.abs(transaction.amount);
-    else if (transaction.category === "Moved") totals.Moved += Math.abs(transaction.amount);
-  }
-  const maximum = Math.max(1, ...Object.values(totals));
-  guide.querySelectorAll(".k-category-cell").forEach((cell, index) => {
-    const [label, value] = [["Zaps", totals.Community], ["People & teams", totals.Sent], ["Own accounts & swaps", totals.Moved]][index] || ["On chain", 0];
-    const name = cell.querySelector("span");
-    const amount = cell.querySelector("b");
-    const bar = cell.querySelector(".k-category-bar i");
-    if (name) name.lastChild.textContent = label;
-    if (amount) amount.textContent = `${formatKud(value)} KUD`;
-    if (bar) bar.style.width = `${(value / maximum) * 100}%`;
-  });
 }
 
 function patchNetworkStats() {
@@ -560,7 +538,6 @@ function recordTransaction({ id, category, icon, title, note, amount, hash }) {
     amount,
     fee: 0,
     status: "Confirmed",
-    explanation: `Confirmed on Kudora. Transaction ${hash}.`,
   });
 }
 
@@ -1099,7 +1076,7 @@ function openZapPanel(message) {
       <div class="k-zap-person"><span class="representative-avatar portrait-civic"></span><div><small>YOU ARE THANKING</small><strong>${escapeHtml(recipient)}</strong></div></div>
       <fieldset><legend>Choose a small amount</legend><div class="k-zap-amounts">${[0.01, 0.1, 0.5, 1].map((amount, index) => `<button type="button" class="${index === 0 ? "selected" : ""}" data-chain-zap-amount="${amount}">${amount} KUD</button>`).join("")}</div></fieldset>
       <label><span>Or enter another amount</span><div class="k-amount-input"><input name="amount" type="number" min="0.000001" step="0.000001" value="0.01"><b>KUD</b></div></label>
-      <div class="k-cost-preview"><span>${escapeHtml(recipient)} receives</span><b data-chain-zap-receives>0.01 KUD</b><span>Network cost</span><b>Calculated by wallet</b></div>
+      <div class="k-cost-preview"><span>${escapeHtml(recipient)} receives</span><b data-chain-zap-receives>0.01 KUD</b><span>Network fee</span><b>Calculated by wallet</b></div>
       <button class="k-confirm-button zap" type="submit">Zap ${escapeHtml(recipient)} <span>ϟ</span></button>
     </form></div>`, `Zap ${recipient}`);
   panel.dataset.chainMessageId = message.messageId;

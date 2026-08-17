@@ -209,7 +209,7 @@ button:not(:disabled),
 .k-account-identity i { display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: var(--k-cyan); box-shadow: 0 0 9px var(--k-cyan); }
 
 .k-balance-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(360px, .65fr); gap: 16px; margin-bottom: 16px; }
-.k-total-card, .k-quick-actions, .k-activity-card, .k-money-guide { border: 1px solid var(--k-line); border-radius: 15px; background: rgba(18,18,25,.78); backdrop-filter: blur(16px); }
+.k-total-card, .k-quick-actions, .k-activity-card { border: 1px solid var(--k-line); border-radius: 15px; background: rgba(18,18,25,.78); backdrop-filter: blur(16px); }
 .k-total-card { padding: 24px 26px; background: linear-gradient(135deg, rgba(82,241,223,.09), rgba(20,20,28,.92) 50%, rgba(255,95,203,.06)); }
 .k-total-card header { display: flex; align-items: center; justify-content: space-between; color: #888793; font: 700 9px/1 var(--font-geist-mono), monospace; letter-spacing: .11em; }
 .k-total-card header button { color: #aaa9b4; background: none; border: 0; }
@@ -268,19 +268,6 @@ button:not(:disabled),
 .k-load-movements small { color: #777682; font-size: 9px; }
 .k-load-movements b { color: var(--k-cyan); }
 
-.k-money-guide { display: grid; grid-template-columns: minmax(210px, .8fr) repeat(3, minmax(0, 1fr)); align-items: center; gap: 28px; margin-bottom: 16px; padding: 18px 22px; }
-.k-money-guide h3 { margin: 7px 0 0; font-size: 18px; letter-spacing: -.03em; }
-.k-category-cell { min-width: 0; padding-left: 22px; border-left: 1px solid rgba(255,255,255,.07); }
-.k-category-row { display: flex; justify-content: space-between; gap: 12px; margin: 15px 0 7px; color: #aaa9b4; font-size: 10px; }
-.k-category-row span { display: flex; align-items: center; gap: 7px; }
-.k-category-row i { width: 7px; height: 7px; border-radius: 50%; background: var(--k-pink); }
-.k-category-row i.cyan { background: var(--k-cyan); }
-.k-category-row i.violet { background: var(--k-violet); }
-.k-category-row b { color: #dedde6; font: 700 9px/1 var(--font-geist-mono), monospace; }
-.k-category-bar { height: 4px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.06); }
-.k-category-bar i { display: block; height: 100%; border-radius: inherit; background: var(--k-pink); }
-.k-category-bar.cyan i { background: var(--k-cyan); }
-.k-category-bar.violet i { background: var(--k-violet); }
 .k-account-tip { display: flex; gap: 10px; margin-top: 26px; padding: 13px; border: 1px solid rgba(82,241,223,.14); border-radius: 10px; background: rgba(82,241,223,.045); }
 .k-account-tip > span { display: grid; place-items: center; flex: 0 0 22px; width: 22px; height: 22px; border-radius: 50%; background: rgba(82,241,223,.12); color: var(--k-cyan); font: 700 11px/1 var(--font-geist-mono), monospace; }
 .k-account-tip p { color: #8f8e9a; font-size: 10px; line-height: 1.55; }
@@ -306,10 +293,6 @@ button:not(:disabled),
 .k-detail-list div { display: flex; justify-content: space-between; gap: 20px; padding: 14px 0; border-bottom: 1px solid rgba(255,255,255,.06); }
 .k-detail-list dt { color: #7e7d89; font-size: 11px; }
 .k-detail-list dd { color: #d7d6de; font: 600 10px/1.4 var(--font-geist-mono), monospace; text-align: right; }
-.k-safe-note { display: flex; gap: 11px; margin-top: 20px; padding: 14px; border: 1px solid rgba(102,230,164,.15); border-radius: 10px; background: rgba(102,230,164,.04); }
-.k-safe-note > span { color: var(--k-green); }
-.k-safe-note p { color: #898894; font-size: 10px; line-height: 1.55; }
-.k-safe-note strong { display: block; color: #d6d5dd; }
 
 .k-wallet-panel-body { display: grid; gap: 12px; }
 .k-wallet-address-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 16px; border: 1px solid var(--k-line); border-radius: 11px; background: rgba(255,255,255,.025); }
@@ -389,9 +372,6 @@ button:not(:disabled),
   .k-account-identity { width: 100%; }
   .k-top-wallet { min-width: 220px; }
   .k-balance-grid, .k-account-layout { grid-template-columns: 1fr; }
-  .k-money-guide { grid-template-columns: 1fr 1fr; }
-  .k-money-guide-heading { grid-column: 1 / -1; }
-  .k-category-cell { padding-left: 0; border-left: 0; }
   .k-transaction-row { grid-template-columns: 38px minmax(0,1fr) 120px 16px; }
   .k-transaction-date { display: none; }
   .k-proposal-detail-actions { align-items: flex-start; flex-direction: column; }
@@ -420,6 +400,4 @@ button:not(:disabled),
   .comment-actions[data-kudora-reactions="true"] > button:not(.k-original-useful) { margin-left: 0; }
   .k-wallet-address-card { grid-template-columns: 1fr; }
   .k-wallet-address-card > button { width: max-content; }
-  .k-money-guide { grid-template-columns: 1fr; gap: 14px; }
-  .k-money-guide-heading { grid-column: auto; }
 }

@@ -755,6 +755,8 @@ export class KudoraChain {
         && !contractAddresses.has(evm.recipient.toLowerCase());
       const isZap = action === "/kudora.discussion.v1.MsgZap";
 
+      if (action === "/cosmos.evm.vm.v1.MsgEthereumTx" && !isMove && !isEvmPayment) return null;
+
       let details;
       if (isValidatorFunding) {
         details = ["Moved", "Funds added to Kudora", "＋"];
@@ -774,7 +776,6 @@ export class KudoraChain {
           "/cosmos.staking.v1beta1.MsgDelegate": ["Activity", "Delegated to a validator", "◎"],
           "/kudora.discussion.v1.MsgPost": ["Activity", "Discussion contribution", "⌁"],
           "/kudora.discussion.v1.MsgReact": ["Activity", "Community reaction", "◇"],
-          "/cosmos.evm.vm.v1.MsgEthereumTx": ["Activity", "EVM transaction", "◆"],
         }[action] || ["Activity", action.split(".").at(-1).replace(/^Msg/, ""), "◆"];
       }
       const fee = coinAmount(records("tx").find((record) => record.fee)?.fee);
@@ -791,11 +792,10 @@ export class KudoraChain {
         amount,
         fee: Number(formatEther(fee)),
         status: "Confirmed",
-        explanation: `Confirmed on Kudora through the ${network} network. Transaction ${tx.hash}.`,
         validatorFunding: isValidatorFunding,
         fundingSourceName: isValidatorFunding ? displayName(counterparty) : undefined,
       };
-    });
+    }).filter(Boolean);
 
     return Promise.all(transactions.map(async (transaction) => {
       if (!transaction.validatorFunding) return transaction;

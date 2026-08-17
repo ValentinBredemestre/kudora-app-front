@@ -254,6 +254,7 @@ test("seeded account activity contains real rewards, payments, moves and zaps", 
     expect(transactions.some((transaction) => transaction.category === "Sent" && Math.abs(transaction.amount - amounts.sent) < 0.000001)).toBe(true);
     expect(transactions.some((transaction) => transaction.category === "Received" && Math.abs(transaction.amount - amounts.received) < 0.000001)).toBe(true);
     expect(transactions.filter((transaction) => transaction.category === "Community").every((transaction) => transaction.title.startsWith("Zap "))).toBe(true);
+    expect(transactions.some((transaction) => transaction.title === "EVM transaction")).toBe(false);
     expect(transactions.every((transaction) => !transaction.note.includes("Block #"))).toBe(true);
   }
 
@@ -274,6 +275,11 @@ test("seeded account activity contains real rewards, payments, moves and zaps", 
   await expect(incomingZap).toContainText("+0.20 KUD");
   await expect(incomingZap.locator(".k-transaction-amount")).toHaveCSS("color", "rgb(102, 230, 164)");
   await expect(page.locator(".k-transaction-row").first()).not.toContainText("Block #");
+  await incomingZap.click();
+  const detail = page.locator(".k-side-panel");
+  await expect(detail).not.toContainText("WHAT HAPPENED");
+  await expect(detail).not.toContainText("Complete and recorded");
+  await detail.locator("[data-close-panel]").click();
 
   await page.locator('[data-transaction-filter="All"]').click();
   await page.locator("[data-transaction-search]").fill("Discussion contribution");
@@ -283,8 +289,11 @@ test("seeded account activity contains real rewards, payments, moves and zaps", 
   await expect(chainAction.locator(".k-transaction-amount")).toHaveCSS("color", "rgb(255, 127, 159)");
   await expect(chainAction).not.toContainText("Block #");
 
-  await expect(page.locator(".k-money-guide")).toContainText("Zaps");
-  await expect(page.locator(".k-money-guide")).toContainText("Own accounts & swaps");
+  await expect(page.locator(".k-money-guide")).toHaveCount(0);
+  await page.locator('[data-account-action="send"]').click();
+  const sendPanel = page.locator(".k-side-panel");
+  await expect(sendPanel).toContainText("Network fee");
+  await expect(sendPanel).not.toContainText("Movement cost");
 });
 
 test("Choose and Vote retain the template semantics with on-chain personal data", async ({ page }) => {
