@@ -165,13 +165,14 @@ test("the original template exposes only live public data while disconnected", a
   const rows = page.locator(".validator-row:not(.validator-head):visible");
   await expect(rows).toHaveCount(3);
   await expect(page.locator(".validator-head")).toContainText("Delegators");
-  await expect(page.locator(".validator-head")).toContainText("Votes / proposals");
+  await expect(page.locator(".validator-head > :nth-child(4)")).toHaveText("Proposals");
+  await expect(page.locator(".validator-head > :nth-child(5)")).toHaveText("Votes");
   await expect(page.locator(".validator-head")).not.toContainText("Yearly rewards");
   await expect(rows.first().locator(".validator-name small")).toContainText("Address · kudovalop");
   await expect(rows.first().locator(".supporters")).toContainText("delegator");
   await expect(rows.first().locator(".uptime")).toContainText("%");
-  await expect(rows.first().locator(".validator-engagement")).toContainText("votes ·");
-  await expect(rows.first().locator(".validator-engagement")).toContainText("proposals");
+  await expect(rows.first().locator(".validator-proposals")).toHaveText(/^\d+$/);
+  await expect(rows.first().locator(".validator-votes")).toHaveText(/^\d+$/);
   await expect(rows.first().getByRole("button")).toHaveText("Choose");
   await expect(page.locator(".set-stat")).toContainText("ACTIVE TEAMS");
   await expect(page.locator(".set-stat")).toContainText("3");
@@ -322,7 +323,7 @@ test("Choose and Vote retain the template semantics with on-chain personal data"
   await expect(page.locator(".validator-group-label:not(.available)")).toContainText("YOUR REPRESENTATIVES");
   await expect(page.locator(".validator-group-label.available")).toContainText("OTHER REPRESENTATIVES");
   await expect(page.locator(".validator-row.delegated:visible")).toHaveCount(1);
-  await expect(page.locator(".validator-row.delegated:visible").getByRole("button")).toHaveText("Add tokens");
+  await expect(page.locator(".validator-row.delegated:visible").getByRole("button")).toHaveText("Add KUD");
   await expect(page.locator(".active-vote-row:visible").first()).toContainText(/YES|NO|ABSTAIN/);
   await page.locator(".active-vote-row:visible").first().click();
   const activity = page.locator(".representative-activity-panel");
@@ -377,16 +378,19 @@ test("the canonical Kudora UI drives real EVM and Cosmos business flows", async 
     await expect(row).toBeVisible();
     await row.locator("button").click();
     const delegateForm = page.locator("[data-chain-delegate-form]");
-    await expect(page.locator(".k-side-panel")).toContainText("VALIDATOR ADDRESS");
+    await expect(page.locator(".k-validator-address")).toContainText("Address");
     await expect(page.locator(".k-side-panel")).toContainText(validator);
-    await expect(page.locator(".k-side-panel")).toContainText("GOVERNANCE ACTIVITY");
+    await expect(page.locator(".k-side-panel")).toContainText("PROPOSALS");
+    await expect(page.locator(".k-side-panel")).toContainText("VOTES");
     await expect(page.locator(".k-side-panel")).not.toContainText("Yearly rewards");
+    await expect(page.locator(".k-side-panel")).not.toContainText(/tokens|unbonding|undelegate|x\/staking|voting power/i);
     await delegateForm.locator("input[name='amount']").fill("0.01");
     await performTransaction(page, () => delegateForm.locator("button[type='submit']").click());
     expect(await delegation(local.accounts.alice.cosmosAddress, validator) - before).toBe(KUD / 100n);
 
     const delegatedRow = page.locator(".validator-row:not(.validator-head):visible").filter({ hasText: validatorConfig.name });
     await delegatedRow.locator("button").click();
+    await page.locator('[data-chain-stake-mode="remove"]').click();
     const undelegateForm = page.locator("[data-chain-undelegate-form]");
     await expect(undelegateForm).toBeVisible();
     await undelegateForm.locator("input[name='amount']").fill("0.005");

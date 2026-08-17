@@ -269,9 +269,15 @@ function patchNetworkStats() {
 function patchChoose() {
   const list = document.querySelector(".validator-list");
   if (!list || !state.validators.length) return;
-  const headerLabels = ["Representative", "Delegators", "Reliability", "Votes / proposals"];
-  [...list.querySelectorAll(".validator-head > :not(:last-child)")].forEach((cell, index) => {
-    cell.textContent = headerLabels[index];
+  const header = list.querySelector(".validator-head");
+  if (header && !header.querySelector(".validator-votes-head")) {
+    const votesHeader = document.createElement("span");
+    votesHeader.className = "validator-votes-head";
+    header.insertBefore(votesHeader, header.lastElementChild);
+  }
+  const headerLabels = ["Representative", "Delegators", "Reliability", "Proposals", "Votes"];
+  [...header.querySelectorAll(":scope > :not(:last-child)")].forEach((cell, index) => {
+    if (cell.textContent !== headerLabels[index]) cell.textContent = headerLabels[index];
   });
   const connected = Boolean(account());
   const chosen = state.validators.filter((validator) => Number(validator.delegationKud) > 0);
@@ -369,22 +375,27 @@ function patchChoose() {
       const detail = row.querySelector(".validator-name small");
       const supporters = row.querySelector(".supporters");
       const reliability = row.querySelector(".uptime");
-      const reward = row.querySelector(".positive, .validator-engagement");
+      const proposals = row.querySelector(".positive, .validator-engagement, .validator-proposals");
       const button = row.querySelector("button");
+      let votes = row.querySelector(".validator-votes");
+      if (!votes) {
+        votes = document.createElement("span");
+        votes.className = "validator-votes";
+        row.insertBefore(votes, button);
+      }
       if (rank) rank.textContent = String(state.validators.indexOf(validator) + 1).padStart(2, "0");
       if (name) name.firstChild.textContent = validator.name;
       if (detail) detail.textContent = `Address · ${shortAddress(validator.operator_address)}`;
       if (supporters) supporters.textContent = validator.delegatorCount === null ? "—" : `${validator.delegatorCount.toLocaleString("en-US")} delegator${validator.delegatorCount === 1 ? "" : "s"}`;
       if (reliability) reliability.textContent = validator.reliabilityPercent === null ? "—" : `${validator.reliabilityPercent.toFixed(2)}%`;
-      if (reward) {
-        reward.classList.remove("positive");
-        reward.classList.add("validator-engagement");
-        reward.textContent = validator.voteCount === null || validator.proposalCount === null
-          ? "—"
-          : `${validator.voteCount.toLocaleString("en-US")} vote${validator.voteCount === 1 ? "" : "s"} · ${validator.proposalCount.toLocaleString("en-US")} proposal${validator.proposalCount === 1 ? "" : "s"}`;
+      if (proposals) {
+        proposals.classList.remove("positive", "validator-engagement");
+        proposals.classList.add("validator-proposals");
+        proposals.textContent = validator.proposalCount === null ? "—" : validator.proposalCount.toLocaleString("en-US");
       }
+      votes.textContent = validator.voteCount === null ? "—" : validator.voteCount.toLocaleString("en-US");
       if (button) {
-        button.textContent = delegated ? "Add tokens" : "Choose";
+        button.textContent = delegated ? "Add KUD" : "Choose";
         button.dataset.chainDelegate = validator.operator_address;
         button.className = delegated ? "secondary-button small" : "outline-button small";
       }
@@ -506,38 +517,36 @@ function patchRepresentativeActivity() {
 function openValidatorPanel(validatorAddress) {
   const validator = state.validators.find((candidate) => candidate.operator_address === validatorAddress);
   if (!validator) return;
-  const power = validator.powerPercent === null ? "—" : `${validator.powerPercent.toFixed(2)}%`;
   const reliability = validator.reliabilityPercent === null ? "—" : `${validator.reliabilityPercent.toFixed(2)}%`;
-  const reliabilityDetail = validator.observedBlocks === null
-    ? "Signing history is not available"
-    : `${validator.observedBlocks.toLocaleString("en-US")} blocks observed · ${validator.missedBlocks.toLocaleString("en-US")} missed`;
-  const engagement = validator.voteCount === null || validator.proposalCount === null
-    ? "—"
-    : `${validator.voteCount.toLocaleString("en-US")} vote${validator.voteCount === 1 ? "" : "s"} · ${validator.proposalCount.toLocaleString("en-US")} proposal${validator.proposalCount === 1 ? "" : "s"}`;
+  const proposals = validator.proposalCount === null ? "—" : validator.proposalCount.toLocaleString("en-US");
+  const votes = validator.voteCount === null ? "—" : validator.voteCount.toLocaleString("en-US");
   const delegation = Number(validator.delegationKud);
   openSidePanel(`
-    ${panelHeader("BONDED VALIDATOR", validator.name, "Live validator details and staking controls.")}
+    ${panelHeader("REPRESENTATIVE", validator.name, "Choose how much KUD this representative speaks for.")}
     <div class="k-panel-body k-validator-panel">
-      <section class="k-validator-address"><span>VALIDATOR ADDRESS</span><strong>${escapeHtml(validator.operator_address)}</strong></section>
-      <div class="k-validator-metrics">
-        <section class="k-wallet-address-card"><div><span>VOTING POWER</span><strong>${power}</strong><small>${formatKud(Number(validator.tokens) / 1e18)} KUD bonded</small></div></section>
-        <section class="k-wallet-address-card"><div><span>RELIABILITY</span><strong>${reliability}</strong><small>${reliabilityDetail}</small></div></section>
-        <section class="k-wallet-address-card"><div><span>GOVERNANCE ACTIVITY</span><strong>${engagement}</strong><small>Confirmed on-chain participation</small></div></section>
-        <section class="k-wallet-address-card"><div><span>YOUR DELEGATION</span><strong>${formatKud(validator.delegationKud)} KUD</strong><small>Current x/staking balance</small></div></section>
+      <div class="k-validator-address"><span>Address</span><strong>${escapeHtml(validator.operator_address)}</strong></div>
+      <div class="k-validator-overview">
+        <div><span>YOUR KUD WITH THEM</span><strong>${formatKud(validator.delegationKud)} KUD</strong></div>
+        <div><span>RELIABILITY</span><strong>${reliability}</strong></div>
+        <div><span>PROPOSALS</span><strong>${proposals}</strong></div>
+        <div><span>VOTES</span><strong>${votes}</strong></div>
       </div>
-      <div class="k-validator-actions${delegation > 0 ? " has-undelegate" : ""}">
-        <form class="k-money-form k-validator-action" data-chain-delegate-form data-chain-validator="${escapeHtml(validator.operator_address)}">
-          <header><span>ADD TOKENS</span><small>Increase your delegation to this validator.</small></header>
-          <label><span>Amount to delegate</span><div class="k-amount-input"><input name="amount" required type="number" min="0.000001" step="0.000001" placeholder="0.00"><b>KUD</b></div></label>
-          <button class="k-confirm-button" type="submit">Delegate tokens <span>→</span></button>
+      <section class="k-validator-actions">
+        <nav aria-label="Manage your KUD">
+          <button class="selected" type="button" data-chain-stake-mode="add">Add KUD</button>
+          ${delegation > 0 ? `<button type="button" data-chain-stake-mode="remove">Remove KUD</button>` : ""}
+        </nav>
+        <form class="k-money-form k-validator-action" data-chain-stake-form="add" data-chain-delegate-form data-chain-validator="${escapeHtml(validator.operator_address)}">
+          <label><span>How much KUD do you want to add?</span><div class="k-amount-input"><input name="amount" required type="number" min="0.000001" step="0.000001" placeholder="0.00"><b>KUD</b></div></label>
+          <button class="k-confirm-button" type="submit">Add KUD <span>→</span></button>
         </form>
-        ${delegation > 0 ? `<form class="k-money-form k-validator-action undelegate" data-chain-undelegate-form data-chain-validator="${escapeHtml(validator.operator_address)}">
-          <header><span>REMOVE TOKENS</span><small>Start the chain unbonding period.</small></header>
-          <label><span>Amount to undelegate</span><div class="k-amount-input"><input name="amount" required type="number" min="0.000001" max="${escapeHtml(validator.delegationKud)}" step="0.000001" placeholder="0.00"><b>KUD</b></div></label>
-          <button class="k-confirm-button secondary" type="submit">Undelegate tokens <span>→</span></button>
+        ${delegation > 0 ? `<form class="k-money-form k-validator-action undelegate" hidden data-chain-stake-form="remove" data-chain-undelegate-form data-chain-validator="${escapeHtml(validator.operator_address)}">
+          <label><span>How much KUD do you want to remove?</span><div class="k-amount-input"><input name="amount" required type="number" min="0.000001" max="${escapeHtml(validator.delegationKud)}" step="0.000001" placeholder="0.00"><b>KUD</b></div></label>
+          <p>Your KUD may take a little time to become available again.</p>
+          <button class="k-confirm-button secondary" type="submit">Remove KUD <span>→</span></button>
         </form>` : ""}
-      </div>
-    </div>`, `Delegate to ${validator.name}`);
+      </section>
+    </div>`, `Manage KUD with ${validator.name}`);
 }
 
 function patchMoneyForms() {
@@ -1138,6 +1147,15 @@ async function handleWalletChoice(button) {
 async function onClick(event) {
   const target = event.target;
   if (!(target instanceof Element)) return;
+  const stakeMode = target.closest("[data-chain-stake-mode]");
+  if (stakeMode) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const actions = stakeMode.closest(".k-validator-actions");
+    actions.querySelectorAll("[data-chain-stake-mode]").forEach((button) => button.classList.toggle("selected", button === stakeMode));
+    actions.querySelectorAll("[data-chain-stake-form]").forEach((form) => { form.hidden = form.dataset.chainStakeForm !== stakeMode.dataset.chainStakeMode; });
+    return;
+  }
   if (target.closest("[data-chain-close-panel]")) {
     event.preventDefault();
     event.stopImmediatePropagation();
