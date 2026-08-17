@@ -1,7 +1,16 @@
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const htmlPath = resolve(import.meta.dirname, "../mirror-assets/index.html");
+const integrationAssets = [
+  "kudora-chain.css",
+  "kudora-chain.js",
+  "kudora-enhancements.css",
+  "kudora-enhancements.js",
+  "kudora-reputation.css",
+  "kudora-reputation.js",
+].map((asset) => resolve(import.meta.dirname, `../mirror-assets/assets/${asset}`));
 let html = await readFile(htmlPath, "utf8");
 html = html
   .replace(/<script>\(function\(\)\{function c\(\).*?<\/script>/s, "")
@@ -29,4 +38,11 @@ if (!html.includes("/assets/kudora-chain.css")) {
 if (!html.includes("/assets/kudora-enhancements.css")) {
   html = html.replace("</head>", '<link rel="stylesheet" href="/assets/kudora-enhancements.css"><link rel="stylesheet" href="/assets/kudora-reputation.css"></head>');
 }
+const integrationHash = createHash("sha256");
+for (const asset of integrationAssets) integrationHash.update(await readFile(asset));
+const integrationVersion = integrationHash.digest("hex").slice(0, 12);
+html = html.replace(
+  /\/assets\/kudora-(?:chain|enhancements|reputation)\.(?:js|css)(?:\?v=[^"']*)?/g,
+  (asset) => `${asset.split("?")[0]}?v=${integrationVersion}`,
+);
 await writeFile(htmlPath, html);
