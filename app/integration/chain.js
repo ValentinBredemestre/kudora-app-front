@@ -23,6 +23,16 @@ const METADATA_LIMIT = 8 * 1024;
 const CONTENT_LIMIT = 8 * 1024;
 const encoder = new TextEncoder();
 
+function withTimeout(promise, milliseconds, message) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), milliseconds);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 const discussionAbi = [
   { type: "function", name: "post", stateMutability: "nonpayable", inputs: [{ name: "proposalId", type: "uint64" }, { name: "parentId", type: "uint64" }, { name: "content", type: "bytes" }], outputs: [{ name: "messageId", type: "uint64" }] },
   { type: "function", name: "react", stateMutability: "nonpayable", inputs: [{ name: "proposalId", type: "uint64" }, { name: "messageId", type: "uint64" }, { name: "reaction", type: "uint8" }], outputs: [{ name: "success", type: "bool" }] },
@@ -412,20 +422,44 @@ export class KudoraChain {
 
   async ensureEvmChain(provider) {
     const chainId = `0x${Number(this.config.evmChainId).toString(16)}`;
+    const chain = {
+      chainId,
+      chainName: "Kudora",
+      nativeCurrency: { name: "KUD", symbol: "KUD", decimals: 18 },
+      rpcUrls: [this.config.evmRpcUrl],
+      iconUrls: [new URL("/kudora-token.png", location.origin).href],
+    };
+    const addChain = () => provider.request({
+      method: "wallet_addEthereumChain",
+      params: [chain],
+    });
     try {
       await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId }] });
     } catch (error) {
       if (error.code !== 4902) throw error;
-      await provider.request({
-        method: "wallet_addEthereumChain",
-        params: [{
-          chainId,
-          chainName: "Kudora",
-          nativeCurrency: { name: "KUD", symbol: "KUD", decimals: 18 },
-          rpcUrls: [this.config.evmRpcUrl],
-          iconUrls: [new URL("/kudora-token.png", location.origin).href],
-        }],
-      });
+      await addChain();
+      await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId }] });
+    }
+
+    if (!this.config.swap?.localnetOnly) return;
+    try {
+      await withTimeout(
+        provider.request({ method: "eth_blockNumber" }),
+        3_000,
+        "MetaMask could not reach the Kudora local network",
+      );
+    } catch {
+      await addChain();
+      await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId }] });
+      try {
+        await withTimeout(
+          provider.request({ method: "eth_blockNumber" }),
+          3_000,
+          "MetaMask could not reach the Kudora local network",
+        );
+      } catch {
+        throw new Error(`The Kudora network saved in MetaMask cannot reach ${this.config.evmRpcUrl}. Remove that network from MetaMask, reconnect here, and accept the Kudora network.`);
+      }
     }
   }
 
