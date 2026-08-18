@@ -207,7 +207,6 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
   await page.addInitScript((address) => {
     window.__walletRequests = { brave: [], metamask: [], announced: [] };
     const braveProvider = {
-      isBraveWallet: true,
       isMetaMask: true,
       request: async ({ method }) => {
         window.__walletRequests.brave.push(method);
@@ -241,7 +240,7 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
       isMetaMask: true,
       request: async ({ method }) => {
         window.__walletRequests.announced.push(method);
-        throw new Error(`Stale announced provider must not be used: ${method}`);
+        throw new Error(`Announced provider must only be a fallback: ${method}`);
       },
     };
     braveProvider.providers = [braveProvider, metaMaskProvider];

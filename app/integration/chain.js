@@ -379,7 +379,16 @@ export class KudoraChain {
     const injected = Array.isArray(window.ethereum?.providers)
       ? [window.ethereum, ...window.ethereum.providers]
       : [window.ethereum];
-    const direct = injected.find((provider) => provider?.isMetaMask && !provider.isBraveWallet);
+    const announcedBraveProviders = new Set(
+      [...this.ethereumProviders.values()]
+        .filter(({ info }) => info.rdns === "com.brave.wallet" || /brave wallet/i.test(info.name))
+        .map(({ provider }) => provider),
+    );
+    const direct = injected.find((provider) => (
+      provider?.isMetaMask
+      && !provider.isBraveWallet
+      && !announcedBraveProviders.has(provider)
+    ));
     if (direct) return direct;
 
     const announced = [...this.ethereumProviders.values()].find(({ info }) => (
