@@ -77,6 +77,7 @@ async function navigate(page, label) {
 }
 
 async function connect(page, family, accountName = "alice") {
+  await page.evaluate(() => { window.__KUDORA_E2E_LOCAL_WALLETS__ = true; });
   await page.getByRole("button", { name: /Connect wallet/i }).click();
   const panel = page.locator(".k-side-panel").last();
   await panel.getByRole("button", { name: new RegExp(`^${family}`) }).click();
@@ -204,7 +205,7 @@ test("the original template exposes only live public data while disconnected", a
 
 test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", async ({ page }) => {
   await page.addInitScript((address) => {
-    window.__walletRequests = { brave: [], metamask: [] };
+    window.__walletRequests = { brave: [], metamask: [], announced: [] };
     const braveProvider = {
       isBraveWallet: true,
       isMetaMask: true,
@@ -236,6 +237,14 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
         throw new Error(`Unexpected MetaMask request: ${method}`);
       },
     };
+    const announcedMetaMaskProvider = {
+      isMetaMask: true,
+      request: async ({ method }) => {
+        window.__walletRequests.announced.push(method);
+        throw new Error(`Stale announced provider must not be used: ${method}`);
+      },
+    };
+    braveProvider.providers = [braveProvider, metaMaskProvider];
     window.ethereum = braveProvider;
     window.addEventListener("eip6963:requestProvider", () => {
       window.dispatchEvent(new CustomEvent("eip6963:announceProvider", {
@@ -257,7 +266,7 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
             icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'/>",
             rdns: "io.metamask",
           },
-          provider: metaMaskProvider,
+          provider: announcedMetaMaskProvider,
         },
       }));
     });
@@ -271,6 +280,7 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
   await expect.poll(() => page.evaluate(() => window.KudoraChain.walletMode)).toBe("metamask");
   await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_requestAccounts").length)).toBe(1);
   await expect.poll(() => page.evaluate(() => window.__walletRequests.brave.length)).toBe(0);
+  await expect.poll(() => page.evaluate(() => window.__walletRequests.announced.length)).toBe(0);
 
   await page.evaluate(() => {
     window.KudoraChain.publicClient.waitForTransactionReceipt = async ({ hash }) => ({ status: "success", transactionHash: hash, logs: [] });
@@ -312,6 +322,22 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
   await discussion.locator('button[type="submit"]').click();
   await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(3);
   await expect(page.locator("#kudora-chain-notification")).toHaveAttribute("data-state", "confirmed");
+});
+
+test("MetaMask never falls back to a local test wallet", async ({ page }) => {
+  await openApp(page);
+  await page.getByRole("button", { name: /Connect wallet/i }).click();
+  await page.locator('[data-chain-connect="metamask"]').click();
+  await expect(page.getByTestId("transaction-status")).toHaveAttribute("data-state", "failed");
+  await expect(page.getByTestId("transaction-status")).toContainText("MetaMask is not installed or is not available on this site");
+  await expect(page.getByRole("button", { name: /Connect wallet/i })).toBeVisible();
+  expect(await page.evaluate(() => {
+    try {
+      return window.KudoraChain.account();
+    } catch {
+      return null;
+    }
+  })).toBeNull();
 });
 
 test("seeded account activity contains real rewards, payments, moves and zaps", async ({ page }) => {

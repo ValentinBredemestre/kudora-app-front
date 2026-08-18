@@ -207,9 +207,7 @@ function openConnectedPanel() {
 }
 
 async function connectWallet(kind, accountName = state.chain.accountName || "alice") {
-  const useLocal = kind.startsWith("local-")
-    || (kind === "metamask" && !window.ethereum && !state.chain.currentMetaMaskProvider())
-    || (kind === "keplr" && !window.keplr);
+  const useLocal = kind.startsWith("local-") || Boolean(window.__KUDORA_E2E_LOCAL_WALLETS__);
   const mode = kind.startsWith("local-") ? kind : useLocal ? `local-${kind}` : kind;
   delete document.body.dataset.chainValidatorsReady;
   try {

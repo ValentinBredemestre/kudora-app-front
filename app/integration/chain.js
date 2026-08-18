@@ -376,15 +376,16 @@ export class KudoraChain {
   }
 
   currentMetaMaskProvider() {
+    const injected = Array.isArray(window.ethereum?.providers)
+      ? [window.ethereum, ...window.ethereum.providers]
+      : [window.ethereum];
+    const direct = injected.find((provider) => provider?.isMetaMask && !provider.isBraveWallet);
+    if (direct) return direct;
+
     const announced = [...this.ethereumProviders.values()].find(({ info }) => (
       info.rdns === "io.metamask" || /^metamask$/i.test(info.name)
     ));
-    if (announced) return announced.provider;
-
-    const injected = Array.isArray(window.ethereum?.providers)
-      ? window.ethereum.providers
-      : [window.ethereum].filter(Boolean);
-    return injected.find((provider) => provider.isMetaMask && !provider.isBraveWallet) || null;
+    return announced?.provider || null;
   }
 
   async metaMaskProvider() {
