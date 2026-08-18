@@ -218,7 +218,7 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
     };
     const metaMaskProvider = {
       isMetaMask: true,
-      request: async ({ method }) => {
+      request: async ({ method, params }) => {
         window.__walletRequests.metamask.push(method);
         if (method === "eth_accounts") return [];
         if (method === "eth_requestAccounts") {
@@ -229,6 +229,7 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
         if (method === "eth_chainId") return "0x1d4c1";
         if (method === "eth_sendTransaction") {
           window.__walletActivation = navigator.userActivation?.isActive;
+          window.__walletTransaction = params?.[0];
           await new Promise((resolve) => setTimeout(resolve, 80));
           return `0x${"1".repeat(64)}`;
         }
@@ -278,12 +279,39 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
   await page.locator(".proposal-list-item:visible").first().click();
   const vote = page.locator("[data-chain-switch-vote]:not([disabled])").first();
   await expect(vote).toBeVisible();
+  const requestsBeforeVote = await page.evaluate(() => window.__walletRequests.metamask.length);
   await vote.click();
   await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(1);
   await expect.poll(() => page.evaluate(() => window.__walletActivation)).toBe(true);
+  expect(await page.evaluate((offset) => window.__walletRequests.metamask.slice(offset), requestsBeforeVote)).toEqual(["eth_sendTransaction"]);
+  expect(await page.evaluate(() => window.__walletTransaction)).toMatchObject({
+    from: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    value: "0x0",
+  });
   await expect(page.locator("#kudora-chain-notification")).toHaveAttribute("data-state", "confirmed");
   await expect(page.locator("#kudora-chain-notification")).toContainText("Done");
   await expect(page.locator("body")).not.toContainText("Submitted · waiting for chain confirmation");
+
+  await page.getByRole("button", { name: "Close decision details" }).click();
+  await navigate(page, "Account");
+  await page.getByRole("button", { name: /Send money/i }).click();
+  const send = page.locator('form[data-money-form="send"]');
+  await send.locator('[name="recipient"]').fill("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+  await send.locator('[name="amount"]').fill("0.01");
+  await send.locator('button[type="submit"]').click();
+  await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(2);
+  await expect(page.locator("#kudora-chain-notification")).toHaveAttribute("data-state", "confirmed");
+
+  await navigate(page, "Vote");
+  const proposal = page.locator(".proposal-list-item:visible").first();
+  const proposalId = await proposal.getAttribute("data-chain-proposal-id");
+  await proposal.click();
+  await page.getByTestId(`discussion-proposal-${proposalId}`).click();
+  const discussion = page.getByTestId("discussion-form");
+  await discussion.locator("textarea").first().fill("MetaMask signing request test");
+  await discussion.locator('button[type="submit"]').click();
+  await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(3);
+  await expect(page.locator("#kudora-chain-notification")).toHaveAttribute("data-state", "confirmed");
 });
 
 test("seeded account activity contains real rewards, payments, moves and zaps", async ({ page }) => {
@@ -479,7 +507,7 @@ test("discussion visuals keep the native template design and the thread stays st
   await expect(visualBuilder).toContainText("Budget");
   await expect(visualBuilder.getByRole("button", { name: /Poll/ })).toBeVisible();
 
-  const visualPost = "A native carousel recorded on Kudora.";
+  const visualPost = `A native carousel recorded on Kudora ${Date.now()}.`;
   await composer.locator("textarea[placeholder*='discussion']").fill(visualPost);
   await performTransaction(page, () => composer.locator('button[type="submit"]').click());
   const recorded = (await discussionMessages(carouselProposalId)).map(messagePayload).find((payload) => payload.text === visualPost);

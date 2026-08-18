@@ -6,6 +6,7 @@ import {
   createWalletClient,
   custom,
   decodeEventLog,
+  encodeFunctionData,
   formatEther,
   getAddress,
   http,
@@ -458,6 +459,24 @@ export class KudoraChain {
     throw new Error("Connect a wallet first");
   }
 
+  metaMaskTransaction({ to, data = "0x", value = 0n, gas }) {
+    if (this.walletMode !== "metamask" || !this.ethereumProvider?.request || !this.evmAccount?.address) {
+      throw new Error("Connect MetaMask first");
+    }
+    const quantity = (amount) => `0x${BigInt(amount).toString(16)}`;
+    return this.ethereumProvider.request({
+      method: "eth_sendTransaction",
+      params: [{
+        from: this.evmAccount.address,
+        to,
+        data,
+        value: quantity(value),
+        gas: quantity(gas),
+        gasPrice: quantity(GAS_PRICE),
+      }],
+    });
+  }
+
   async balances() {
     const account = this.account();
     const [evm, bank, mockUsdc] = await Promise.all([
@@ -543,9 +562,16 @@ export class KudoraChain {
   }
 
   async writeEvm({ address, abi, functionName, args = [], value = 0n, account }) {
-    const immediateWallet = this.evmWalletNow(account);
-    const wallet = immediateWallet || await this.evmWallet(account);
-    const hashRequest = wallet.writeContract({ address, abi, functionName, args, value, gas: 2_000_000n, gasPrice: GAS_PRICE });
+    const injectedRequest = this.walletMode === "metamask" && !account
+      ? this.metaMaskTransaction({
+        to: address,
+        data: encodeFunctionData({ abi, functionName, args }),
+        value,
+        gas: 2_000_000n,
+      })
+      : null;
+    const wallet = injectedRequest ? null : this.evmWalletNow(account) || await this.evmWallet(account);
+    const hashRequest = injectedRequest || wallet.writeContract({ address, abi, functionName, args, value, gas: 2_000_000n, gasPrice: GAS_PRICE });
     const hash = await hashRequest;
     const receipt = await this.publicClient.waitForTransactionReceipt({ hash, timeout: 60_000 });
     if (receipt.status !== "success") throw new Error(`EVM transaction ${hash} reverted`);
@@ -560,9 +586,11 @@ export class KudoraChain {
       return this.broadcastCosmos([{ typeUrl: "/cosmos.bank.v1beta1.MsgSend", value: encodeMsgSend(this.cosmosAddress, target, value) }], "Kudora KUD transfer");
     }
     const target = recipient.startsWith("kudo1") ? evmFromCosmos(recipient) : recipient;
-    const immediateWallet = this.evmWalletNow();
-    const wallet = immediateWallet || await this.evmWallet();
-    const hashRequest = wallet.sendTransaction({ to: target, value, gas: 21_000n, gasPrice: GAS_PRICE });
+    const injectedRequest = this.walletMode === "metamask"
+      ? this.metaMaskTransaction({ to: target, value, gas: 21_000n })
+      : null;
+    const wallet = injectedRequest ? null : this.evmWalletNow() || await this.evmWallet();
+    const hashRequest = injectedRequest || wallet.sendTransaction({ to: target, value, gas: 21_000n, gasPrice: GAS_PRICE });
     const hash = await hashRequest;
     const receipt = await this.publicClient.waitForTransactionReceipt({ hash, timeout: 60_000 });
     if (receipt.status !== "success") throw new Error(`EVM transaction ${hash} reverted`);
