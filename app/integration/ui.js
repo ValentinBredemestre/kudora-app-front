@@ -209,12 +209,19 @@ function openConnectedPanel() {
 async function connectWallet(kind, accountName = state.chain.accountName || "alice") {
   const useLocal = kind.startsWith("local-") || Boolean(window.__KUDORA_E2E_LOCAL_WALLETS__);
   const mode = kind.startsWith("local-") ? kind : useLocal ? `local-${kind}` : kind;
+  let quickSessionError = null;
   delete document.body.dataset.chainValidatorsReady;
   try {
     await transact(`Connect ${kind.replace("local-", "")}`, () => state.chain.connect(mode, accountName).then(() => ({ hash: "" })));
     renderTopWallet();
+    try {
+      if (!await state.chain.activeSession()) await transact("Quick interactions for 7 days", () => state.chain.ensureQuickSession());
+    } catch (error) {
+      quickSessionError = error;
+    }
     await Promise.all([refreshAccount(), loadProposals()]);
     closeSidePanel();
+    if (quickSessionError) throw quickSessionError;
     return mode;
   } finally {
     document.body.dataset.chainValidatorsReady = "true";
@@ -1435,8 +1442,9 @@ function patchDiscussionPreview() {
 }
 
 function sessionControls() {
-  const enabled = Boolean(sessionStorage.getItem("kudora-session-key"));
-  return `<div class="k-chain-session-controls" data-testid="quick-interactions"><span><small>QUICK INTERACTIONS</small><strong>${enabled ? "Enabled for this browser tab" : "Use one approval for comments and reactions"}</strong></span><button type="button" data-chain-session="authorize">${enabled ? "Refill / renew" : "Enable once"}</button>${enabled ? '<button type="button" data-chain-session="revoke">Revoke</button>' : ""}</div>`;
+  const record = state.chain?.quickSessionInfo();
+  const days = record ? Math.max(1, Math.ceil((Number(record.expiresAt) - Date.now() / 1000) / 86_400)) : 0;
+  return `<div class="k-chain-session-controls" data-testid="quick-interactions"><span><small>QUICK INTERACTIONS</small><strong>${record ? `Comments and reactions stay instant · ${days} days left` : "One approval keeps comments and reactions instant for 7 days"}</strong></span>${record ? '<button type="button" data-chain-session="revoke">Turn off</button>' : '<button type="button" data-chain-session="authorize">Enable for 7 days</button>'}</div>`;
 }
 
 function visualItemsFromBuilder(builder, kind) {
@@ -1522,12 +1530,16 @@ function patchDiscussionPanel() {
       composer.insertAdjacentHTML("afterbegin", sessionControls());
       controls = composer.querySelector(".k-chain-session-controls");
     } else {
-      const enabled = Boolean(sessionStorage.getItem("kudora-session-key"));
-      controls.querySelector("strong").textContent = enabled ? "Enabled for this browser tab" : "Use one approval for comments and reactions";
+      const record = state.chain.quickSessionInfo();
+      const enabled = Boolean(record);
+      const days = record ? Math.max(1, Math.ceil((Number(record.expiresAt) - Date.now() / 1000) / 86_400)) : 0;
+      controls.querySelector("strong").textContent = enabled ? `Comments and reactions stay instant · ${days} days left` : "One approval keeps comments and reactions instant for 7 days";
       const authorize = controls.querySelector('[data-chain-session="authorize"]');
-      if (authorize) authorize.textContent = enabled ? "Refill / renew" : "Enable once";
+      if (authorize) authorize.textContent = "Enable for 7 days";
       const revoke = controls.querySelector('[data-chain-session="revoke"]');
-      if (enabled && !revoke) controls.insertAdjacentHTML("beforeend", '<button type="button" data-chain-session="revoke">Revoke</button>');
+      if (enabled && !revoke) controls.insertAdjacentHTML("beforeend", '<button type="button" data-chain-session="revoke">Turn off</button>');
+      if (enabled) authorize?.remove();
+      if (!enabled && !authorize) controls.insertAdjacentHTML("beforeend", '<button type="button" data-chain-session="authorize">Enable for 7 days</button>');
       if (!enabled) revoke?.remove();
     }
     const identity = composer.querySelector(".comment-identity");
@@ -1836,7 +1848,7 @@ async function onClick(event) {
     const current = reactionState(proposalId, { messageId: message.dataset.chainMessageId });
     const selected = Number(reactionButton.dataset.chainReaction);
     const value = current.own === selected ? 0 : selected;
-    await transact(value ? "Reaction" : "Reaction removed", () => state.chain.react(proposalId, message.dataset.chainMessageId, value, Boolean(sessionStorage.getItem("kudora-session-key"))));
+    await transact(value ? "Reaction" : "Reaction removed", () => state.chain.react(proposalId, message.dataset.chainMessageId, value));
     await loadDiscussion(proposalId, true);
     return;
   }
@@ -1977,8 +1989,7 @@ async function onSubmit(event) {
     if (!account()) return openConnectPanel();
     const payload = discussionPayload(form);
     if (!payload.text && !payload.items?.length && !payload.slides?.length) throw new Error("Write a message or add a visual");
-    const quick = Boolean(sessionStorage.getItem("kudora-session-key"));
-    await transact(state.parentId ? "Discussion reply" : "Discussion post", () => state.chain.postPayload(payload, state.activeProposal.id, state.parentId, quick));
+    await transact(state.parentId ? "Discussion reply" : "Discussion post", () => state.chain.postPayload(payload, state.activeProposal.id, state.parentId));
     state.parentId = 0;
     const textarea = form.querySelector("textarea[placeholder*='discussion']") || form.querySelector("textarea");
     if (textarea) {

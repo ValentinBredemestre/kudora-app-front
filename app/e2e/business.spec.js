@@ -282,6 +282,9 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
     });
   }, "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
   await openApp(page);
+  await page.evaluate(() => {
+    window.KudoraChain.publicClient.waitForTransactionReceipt = async ({ hash }) => ({ status: "success", transactionHash: hash, logs: [] });
+  });
   await page.getByRole("button", { name: /Connect wallet/i }).click();
   await page.locator('[data-chain-connect="metamask"]').evaluate((button) => {
     button.click();
@@ -292,17 +295,15 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
   await expect.poll(() => page.evaluate(() => window.__walletRequests.brave.length)).toBe(0);
   await expect.poll(() => page.evaluate(() => window.__walletRequests.announced.length)).toBe(0);
   await expect.poll(() => page.evaluate(() => window.__walletAddedChain?.rpcUrls?.[0] || "")).toContain(":8545");
-
-  await page.evaluate(() => {
-    window.KudoraChain.publicClient.waitForTransactionReceipt = async ({ hash }) => ({ status: "success", transactionHash: hash, logs: [] });
-  });
+  await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(1);
+  await expect.poll(() => page.evaluate(() => Boolean(window.KudoraChain.quickSessionInfo()))).toBe(true);
   await navigate(page, "Vote");
   await page.locator(".proposal-list-item:visible").first().click();
   const vote = page.locator("[data-chain-switch-vote]:not([disabled])").first();
   await expect(vote).toBeVisible();
   const requestsBeforeVote = await page.evaluate(() => window.__walletRequests.metamask.length);
   await vote.click();
-  await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(1);
+  await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(2);
   await expect.poll(() => page.evaluate(() => window.__walletActivation)).toBe(true);
   expect(await page.evaluate((offset) => window.__walletRequests.metamask.slice(offset), requestsBeforeVote)).toEqual(["eth_sendTransaction"]);
   expect(await page.evaluate(() => window.__walletTransaction)).toMatchObject({
@@ -320,7 +321,7 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
   await send.locator('[name="recipient"]').fill("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
   await send.locator('[name="amount"]').fill("0.01");
   await send.locator('button[type="submit"]').click();
-  await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(2);
+  await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(3);
   await expect(page.locator("#kudora-chain-notification")).toHaveAttribute("data-state", "confirmed");
 
   await navigate(page, "Vote");
@@ -328,6 +329,12 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
   const proposalId = await proposal.getAttribute("data-chain-proposal-id");
   await proposal.click();
   await page.getByTestId(`discussion-proposal-${proposalId}`).click();
+  await page.evaluate(() => {
+    const writeEvm = window.KudoraChain.writeEvm.bind(window.KudoraChain);
+    window.KudoraChain.writeEvm = (request) => request.account
+      ? Promise.resolve({ hash: `0x${"2".repeat(64)}`, receipt: { status: "success", logs: [] }, path: "evm" })
+      : writeEvm(request);
+  });
   const discussion = page.getByTestId("discussion-form");
   await discussion.locator("textarea").first().fill("MetaMask signing request test");
   await discussion.locator('button[type="submit"]').click();
@@ -785,12 +792,14 @@ test("the canonical Kudora UI drives real EVM and Cosmos business flows", async 
     expect(await reactions(evmProposal.id, rootMessage.message_id)).toHaveLength(0);
   });
 
-  await test.step("one quick authorization posts and reacts as its owner, then revokes", async () => {
+  await test.step("connection grants seven days of quick comments and reactions, then revokes", async () => {
     await freshWallet(page, "MetaMask", "alice");
     await openDiscussion(page, evmProposal.id);
-    await performTransaction(page, () => page.locator('[data-chain-session="authorize"]').click());
-    const sessionKey = await page.evaluate(() => sessionStorage.getItem("kudora-session-key"));
-    expect(sessionKey).toMatch(/^0x[0-9a-f]{64}$/);
+    await expect(page.getByTestId("quick-interactions")).toContainText("7 days left");
+    await expect(page.locator('[data-chain-session="authorize"]')).toHaveCount(0);
+    const sessionRecord = await page.evaluate(() => window.KudoraChain.quickSessionInfo());
+    expect(sessionRecord.privateKey).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(Number(sessionRecord.expiresAt)).toBeGreaterThan(Math.floor(Date.now() / 1000) + (6 * 24 * 60 * 60));
     const sessionAddress = await page.evaluate(() => window.KudoraChain.sessionAccount().then((item) => item.address));
     const sessionState = await json(`${REST}/kudora/discussion/v1/sessions/${sessionAddress}`);
     const owner = `0x${Buffer.from(sessionState.session.owner, "base64").toString("hex")}`;
@@ -804,12 +813,8 @@ test("the canonical Kudora UI drives real EVM and Cosmos business flows", async 
     await performTransaction(page, () => page.getByTestId(`message-${replyMessage.message_id}`).locator('[data-chain-reaction="1"]').click());
     await performTransaction(page, () => page.locator('[data-chain-session="revoke"]').click());
     expect((await fetch(`${REST}/kudora/discussion/v1/sessions/${sessionAddress}`)).status).toBe(404);
-
-    await page.evaluate((key) => sessionStorage.setItem("kudora-session-key", key), sessionKey);
-    await page.getByTestId("discussion-form").locator("textarea").first().fill("This revoked authorization must fail");
-    await page.getByTestId("discussion-form").locator('button[type="submit"]').click();
-    await expect(page.getByTestId("transaction-status")).toHaveAttribute("data-state", "failed", { timeout: 90_000 });
-    await page.evaluate(() => sessionStorage.removeItem("kudora-session-key"));
+    expect(await page.evaluate(() => window.KudoraChain.quickSessionInfo())).toBeNull();
+    await expect(page.getByTestId("quick-interactions")).toContainText("Enable for 7 days");
   });
 
   await test.step("Zap transfers exact KUD to the comment author", async () => {

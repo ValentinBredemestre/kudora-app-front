@@ -21,6 +21,8 @@ const COSMOS_FEE = 1_000_000_000_000_000n;
 const COSMOS_GAS = 1_000_000n;
 const METADATA_LIMIT = 8 * 1024;
 const CONTENT_LIMIT = 8 * 1024;
+const QUICK_SESSION_DURATION_SECONDS = 7 * 24 * 60 * 60;
+const QUICK_SESSION_FUND_KUD = "0.05";
 const encoder = new TextEncoder();
 
 function withTimeout(promise, milliseconds, message) {
@@ -302,6 +304,7 @@ export class KudoraChain {
     this.ethereumProviders = new Map();
     this.cosmosAddress = null;
     this.connecting = null;
+    this.authorizingSession = null;
     this.blockTimeCache = new Map();
     window.addEventListener("eip6963:announceProvider", (event) => {
       const detail = event.detail;
@@ -968,13 +971,13 @@ export class KudoraChain {
     return { typeUrl, value: encodeDiscussion(type, { creator: this.cosmosAddress, ...fields }) };
   }
 
-  async post(text, proposalId = 0, parentId = 0, quick = false) {
-    return this.postPayload({ v: 1, t: "text", text: text.trim() }, proposalId, parentId, quick);
+  async post(text, proposalId = 0, parentId = 0) {
+    return this.postPayload({ v: 1, t: "text", text: text.trim() }, proposalId, parentId);
   }
 
-  async postPayload(payload, proposalId = 0, parentId = 0, quick = false) {
+  async postPayload(payload, proposalId = 0, parentId = 0) {
     const content = contentBytes(payload);
-    if (quick) {
+    if (this.quickSessionActive()) {
       const session = await this.sessionAccount();
       return this.writeEvm({ account: session, address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "post", args: [BigInt(proposalId), BigInt(parentId), hexFromBytes(content)] });
     }
@@ -982,8 +985,8 @@ export class KudoraChain {
     return this.writeEvm({ address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "post", args: [BigInt(proposalId), BigInt(parentId), hexFromBytes(content)] });
   }
 
-  async react(proposalId, messageId, reaction, quick = false) {
-    if (quick) {
+  async react(proposalId, messageId, reaction) {
+    if (this.quickSessionActive()) {
       const session = await this.sessionAccount();
       return this.writeEvm({ account: session, address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "react", args: [BigInt(proposalId), BigInt(messageId), Number(reaction)] });
     }
@@ -1015,24 +1018,80 @@ export class KudoraChain {
     return body.reactions || [];
   }
 
+  quickSessionStorageKey(owner = this.evmAccount?.address) {
+    return owner ? `kudora-quick-session:${this.config.evmChainId}:${owner.toLowerCase()}` : null;
+  }
+
+  quickSessionInfo() {
+    const key = this.quickSessionStorageKey();
+    if (!key) return null;
+    try {
+      const record = JSON.parse(localStorage.getItem(key) || "null");
+      if (!record?.privateKey?.match(/^0x[0-9a-f]{64}$/i)
+        || record.owner?.toLowerCase() !== this.evmAccount.address.toLowerCase()
+        || Number(record.expiresAt) <= Math.floor(Date.now() / 1000)) {
+        localStorage.removeItem(key);
+        return null;
+      }
+      privateKeyToAccount(record.privateKey);
+      return record;
+    } catch {
+      localStorage.removeItem(key);
+      return null;
+    }
+  }
+
+  quickSessionActive() {
+    return Boolean(this.quickSessionInfo());
+  }
+
+  clearQuickSession() {
+    const key = this.quickSessionStorageKey();
+    if (key) localStorage.removeItem(key);
+  }
+
   generateSession() {
     let key;
     do {
       key = crypto.getRandomValues(new Uint8Array(32));
     } while (!secp256k1.utils.isValidSecretKey(key));
     const privateKey = hexFromBytes(key);
-    sessionStorage.setItem("kudora-session-key", privateKey);
-    return privateKeyToAccount(privateKey);
+    return { privateKey, account: privateKeyToAccount(privateKey) };
   }
 
   async sessionAccount() {
-    const privateKey = sessionStorage.getItem("kudora-session-key");
-    if (!privateKey) throw new Error("Enable Quick interactions first");
-    return privateKeyToAccount(privateKey);
+    const record = this.quickSessionInfo();
+    if (!record) throw new Error("Reconnect your wallet to renew quick interactions");
+    return privateKeyToAccount(record.privateKey);
   }
 
-  async authorizeSession(fundAmount = "0.05", durationSeconds = 3600) {
-    const session = sessionStorage.getItem("kudora-session-key") ? await this.sessionAccount() : this.generateSession();
+  async activeSession() {
+    const record = this.quickSessionInfo();
+    if (!record) return null;
+    try {
+      const session = privateKeyToAccount(record.privateKey);
+      const body = await fetchJson(`${this.config.cosmosRestUrl}/kudora/discussion/v1/sessions/${session.address}`);
+      const owner = hexFromBytes(bytesFromBase64(body.session?.owner || ""));
+      const expiresAt = Number(body.session?.expires_at || 0);
+      if (owner.toLowerCase() !== this.evmAccount.address.toLowerCase()
+        || expiresAt !== Number(record.expiresAt)
+        || expiresAt <= Math.floor(Date.now() / 1000)) {
+        this.clearQuickSession();
+        return null;
+      }
+      return { ...record, sessionAddress: session.address };
+    } catch {
+      this.clearQuickSession();
+      return null;
+    }
+  }
+
+  async authorizeSession(fundAmount = QUICK_SESSION_FUND_KUD, durationSeconds = QUICK_SESSION_DURATION_SECONDS) {
+    const existing = this.quickSessionInfo();
+    const generated = existing
+      ? { privateKey: existing.privateKey, account: privateKeyToAccount(existing.privateKey) }
+      : this.generateSession();
+    const session = generated.account;
     const expiresAt = BigInt(Math.floor(Date.now() / 1000) + durationSeconds);
     const amount = parseEther(String(fundAmount));
     let tx;
@@ -1041,7 +1100,25 @@ export class KudoraChain {
     } else {
       tx = await this.writeEvm({ address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "authorizeSession", args: [session.address, expiresAt, amount] });
     }
+    localStorage.setItem(this.quickSessionStorageKey(), JSON.stringify({
+      privateKey: generated.privateKey,
+      owner: this.evmAccount.address,
+      expiresAt: String(expiresAt),
+    }));
     return { ...tx, sessionAddress: session.address, expiresAt: String(expiresAt) };
+  }
+
+  async ensureQuickSession() {
+    if (this.authorizingSession) return this.authorizingSession;
+    this.authorizingSession = (async () => {
+      const active = await this.activeSession();
+      return active || this.authorizeSession();
+    })();
+    try {
+      return await this.authorizingSession;
+    } finally {
+      this.authorizingSession = null;
+    }
   }
 
   async session() {
@@ -1054,7 +1131,7 @@ export class KudoraChain {
     let tx;
     if (this.isKeplr()) tx = await this.broadcastCosmos([this.discussionMessage("revoke", { sessionAddress: session.address })], "Revoke Kudora quick interactions");
     else tx = await this.writeEvm({ address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "revokeSession", args: [session.address] });
-    sessionStorage.removeItem("kudora-session-key");
+    this.clearQuickSession();
     return tx;
   }
 
