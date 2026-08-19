@@ -1165,7 +1165,7 @@ export class KudoraChain {
     const session = generated.account;
     const expiresAt = BigInt(Math.floor(Date.now() / 1000) + durationSeconds);
     const target = parseEther(String(fundAmount ?? QUICK_SESSION_FUND_KUD));
-    const balance = fundAmount === undefined ? await this.publicClient.getBalance({ address: session.address }) : 0n;
+    const balance = fundAmount === undefined && existing ? await this.publicClient.getBalance({ address: session.address }) : 0n;
     const amount = fundAmount === undefined && balance >= target ? 1n : target - balance;
     let tx;
     if (this.isKeplr()) {

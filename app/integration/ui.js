@@ -209,19 +209,12 @@ function openConnectedPanel() {
 async function connectWallet(kind, accountName = state.chain.accountName || "alice") {
   const useLocal = kind.startsWith("local-") || Boolean(window.__KUDORA_E2E_LOCAL_WALLETS__);
   const mode = kind.startsWith("local-") ? kind : useLocal ? `local-${kind}` : kind;
-  let quickSessionError = null;
   delete document.body.dataset.chainValidatorsReady;
   try {
     await transact(`Connect ${kind.replace("local-", "")}`, () => state.chain.connect(mode, accountName).then(() => ({ hash: "" })));
     renderTopWallet();
-    try {
-      if (!await state.chain.activeSession()) await transact("Quick interactions for 7 days", () => state.chain.ensureQuickSession());
-    } catch (error) {
-      quickSessionError = error;
-    }
     await Promise.all([refreshAccount(), loadProposals()]);
     closeSidePanel();
-    if (quickSessionError) throw quickSessionError;
     return mode;
   } finally {
     document.body.dataset.chainValidatorsReady = "true";
@@ -1444,7 +1437,7 @@ function patchDiscussionPreview() {
 function sessionControls() {
   const record = state.chain?.quickSessionInfo();
   const days = record ? Math.max(1, Math.ceil((Number(record.expiresAt) - Date.now() / 1000) / 86_400)) : 0;
-  return `<div class="k-chain-session-controls" data-testid="quick-interactions"><span><small>QUICK INTERACTIONS</small><strong>${record ? `Comments, reactions, votes and zaps stay instant · ${days} days left` : "One approval keeps comments, reactions, votes and zaps instant for 7 days"}</strong></span>${record ? '<button type="button" data-chain-session="revoke">Turn off</button>' : '<button type="button" data-chain-session="authorize">Enable for 7 days</button>'}</div>`;
+  return `<div class="k-chain-session-controls" data-testid="quick-interactions"><span><small>QUICK INTERACTIONS</small><strong>${record ? `Comments, reactions, votes and zaps stay instant · ${days} days left` : "Your first vote, comment, reaction or zap asks once · then stays instant for 7 days"}</strong></span>${record ? '<button type="button" data-chain-session="revoke">Turn off</button>' : ""}</div>`;
 }
 
 function visualItemsFromBuilder(builder, kind) {
@@ -1533,13 +1526,9 @@ function patchDiscussionPanel() {
       const record = state.chain.quickSessionInfo();
       const enabled = Boolean(record);
       const days = record ? Math.max(1, Math.ceil((Number(record.expiresAt) - Date.now() / 1000) / 86_400)) : 0;
-      controls.querySelector("strong").textContent = enabled ? `Comments, reactions, votes and zaps stay instant · ${days} days left` : "One approval keeps comments, reactions, votes and zaps instant for 7 days";
-      const authorize = controls.querySelector('[data-chain-session="authorize"]');
-      if (authorize) authorize.textContent = "Enable for 7 days";
+      controls.querySelector("strong").textContent = enabled ? `Comments, reactions, votes and zaps stay instant · ${days} days left` : "Your first vote, comment, reaction or zap asks once · then stays instant for 7 days";
       const revoke = controls.querySelector('[data-chain-session="revoke"]');
       if (enabled && !revoke) controls.insertAdjacentHTML("beforeend", '<button type="button" data-chain-session="revoke">Turn off</button>');
-      if (enabled) authorize?.remove();
-      if (!enabled && !authorize) controls.insertAdjacentHTML("beforeend", '<button type="button" data-chain-session="authorize">Enable for 7 days</button>');
       if (!enabled) revoke?.remove();
     }
     const identity = composer.querySelector(".comment-identity");
@@ -1893,8 +1882,7 @@ async function onClick(event) {
     event.preventDefault();
     event.stopImmediatePropagation();
     if (!account()) return openConnectPanel();
-    if (session === "authorize") await transact("Quick interactions authorized", () => state.chain.authorizeSession());
-    else await transact("Quick interactions revoked", () => state.chain.revokeSession());
+    if (session === "revoke") await transact("Quick interactions revoked", () => state.chain.revokeSession());
     patchDiscussionPanel();
     return;
   }
