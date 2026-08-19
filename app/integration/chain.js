@@ -22,7 +22,7 @@ const COSMOS_GAS = 1_000_000n;
 const METADATA_LIMIT = 8 * 1024;
 const CONTENT_LIMIT = 8 * 1024;
 const QUICK_SESSION_DURATION_SECONDS = 7 * 24 * 60 * 60;
-const QUICK_SESSION_FUND_KUD = "0.05";
+const QUICK_SESSION_FUND_KUD = "1.05";
 const encoder = new TextEncoder();
 
 function withTimeout(promise, milliseconds, message) {
@@ -39,6 +39,7 @@ const discussionAbi = [
   { type: "function", name: "post", stateMutability: "nonpayable", inputs: [{ name: "proposalId", type: "uint64" }, { name: "parentId", type: "uint64" }, { name: "content", type: "bytes" }], outputs: [{ name: "messageId", type: "uint64" }] },
   { type: "function", name: "react", stateMutability: "nonpayable", inputs: [{ name: "proposalId", type: "uint64" }, { name: "messageId", type: "uint64" }, { name: "reaction", type: "uint8" }], outputs: [{ name: "success", type: "bool" }] },
   { type: "function", name: "zap", stateMutability: "nonpayable", inputs: [{ name: "proposalId", type: "uint64" }, { name: "messageId", type: "uint64" }, { name: "amount", type: "uint256" }], outputs: [{ name: "success", type: "bool" }] },
+  { type: "function", name: "vote", stateMutability: "nonpayable", inputs: [{ name: "proposalId", type: "uint64" }, { name: "option", type: "uint8" }], outputs: [{ name: "success", type: "bool" }] },
   { type: "function", name: "authorizeSession", stateMutability: "nonpayable", inputs: [{ name: "session", type: "address" }, { name: "expiresAt", type: "uint64" }, { name: "fundAmount", type: "uint256" }], outputs: [{ name: "success", type: "bool" }] },
   { type: "function", name: "revokeSession", stateMutability: "nonpayable", inputs: [{ name: "session", type: "address" }], outputs: [{ name: "success", type: "bool" }] },
 ];
@@ -687,6 +688,10 @@ export class KudoraChain {
   }
 
   async vote(proposalId, option) {
+    if (this.quickSessionActive()) {
+      const session = await this.sessionAccount();
+      return this.writeEvm({ account: session, address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "vote", args: [BigInt(proposalId), Number(option)] });
+    }
     if (this.isKeplr()) {
       return this.broadcastCosmos([{ typeUrl: "/cosmos.gov.v1.MsgVote", value: encodeMsgVote(this.cosmosAddress, proposalId, option) }], "Kudora governance vote");
     }
@@ -996,6 +1001,11 @@ export class KudoraChain {
 
   async zap(proposalId, messageId, amount) {
     const value = parseEther(String(amount));
+    if (value <= 0n || value > parseEther("1")) throw new Error("Choose a zap between 0 and 1 KUD");
+    if (this.quickSessionActive()) {
+      const session = await this.sessionAccount();
+      return this.writeEvm({ account: session, address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "zap", args: [BigInt(proposalId), BigInt(messageId), value] });
+    }
     if (this.isKeplr()) return this.broadcastCosmos([this.discussionMessage("zap", { proposalId, messageId, amount: value.toString() })], "Kudora Zap");
     return this.writeEvm({ address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "zap", args: [BigInt(proposalId), BigInt(messageId), value] });
   }
@@ -1022,14 +1032,13 @@ export class KudoraChain {
     return owner ? `kudora-quick-session:${this.config.evmChainId}:${owner.toLowerCase()}` : null;
   }
 
-  quickSessionInfo() {
+  quickSessionRecord() {
     const key = this.quickSessionStorageKey();
     if (!key) return null;
     try {
       const record = JSON.parse(localStorage.getItem(key) || "null");
       if (!record?.privateKey?.match(/^0x[0-9a-f]{64}$/i)
-        || record.owner?.toLowerCase() !== this.evmAccount.address.toLowerCase()
-        || Number(record.expiresAt) <= Math.floor(Date.now() / 1000)) {
+        || record.owner?.toLowerCase() !== this.evmAccount.address.toLowerCase()) {
         localStorage.removeItem(key);
         return null;
       }
@@ -1039,6 +1048,11 @@ export class KudoraChain {
       localStorage.removeItem(key);
       return null;
     }
+  }
+
+  quickSessionInfo() {
+    const record = this.quickSessionRecord();
+    return record && Number(record.expiresAt) > Math.floor(Date.now() / 1000) ? record : null;
   }
 
   quickSessionActive() {
@@ -1059,8 +1073,8 @@ export class KudoraChain {
     return { privateKey, account: privateKeyToAccount(privateKey) };
   }
 
-  async sessionAccount() {
-    const record = this.quickSessionInfo();
+  async sessionAccount(allowExpired = false) {
+    const record = allowExpired ? this.quickSessionRecord() : this.quickSessionInfo();
     if (!record) throw new Error("Reconnect your wallet to renew quick interactions");
     return privateKeyToAccount(record.privateKey);
   }
@@ -1086,14 +1100,16 @@ export class KudoraChain {
     }
   }
 
-  async authorizeSession(fundAmount = QUICK_SESSION_FUND_KUD, durationSeconds = QUICK_SESSION_DURATION_SECONDS) {
-    const existing = this.quickSessionInfo();
+  async authorizeSession(fundAmount, durationSeconds = QUICK_SESSION_DURATION_SECONDS) {
+    const existing = this.quickSessionRecord();
     const generated = existing
       ? { privateKey: existing.privateKey, account: privateKeyToAccount(existing.privateKey) }
       : this.generateSession();
     const session = generated.account;
     const expiresAt = BigInt(Math.floor(Date.now() / 1000) + durationSeconds);
-    const amount = parseEther(String(fundAmount));
+    const target = parseEther(String(fundAmount ?? QUICK_SESSION_FUND_KUD));
+    const balance = fundAmount === undefined ? await this.publicClient.getBalance({ address: session.address }) : 0n;
+    const amount = fundAmount === undefined && balance >= target ? 1n : target - balance;
     let tx;
     if (this.isKeplr()) {
       tx = await this.broadcastCosmos([this.discussionMessage("authorize", { sessionAddress: session.address, expiresAt, fundAmount: amount.toString() })], "Authorize Kudora quick interactions");
@@ -1127,7 +1143,7 @@ export class KudoraChain {
   }
 
   async revokeSession() {
-    const session = await this.sessionAccount();
+    const session = await this.sessionAccount(true);
     let tx;
     if (this.isKeplr()) tx = await this.broadcastCosmos([this.discussionMessage("revoke", { sessionAddress: session.address })], "Revoke Kudora quick interactions");
     else tx = await this.writeEvm({ address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "revokeSession", args: [session.address] });

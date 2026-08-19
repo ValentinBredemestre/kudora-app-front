@@ -297,15 +297,25 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
   await expect.poll(() => page.evaluate(() => window.__walletAddedChain?.rpcUrls?.[0] || "")).toContain(":8545");
   await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(1);
   await expect.poll(() => page.evaluate(() => Boolean(window.KudoraChain.quickSessionInfo()))).toBe(true);
+  await page.evaluate(() => {
+    window.__quickSessionRequests = [];
+    const writeEvm = window.KudoraChain.writeEvm.bind(window.KudoraChain);
+    window.KudoraChain.writeEvm = (request) => {
+      if (!request.account) return writeEvm(request);
+      window.__quickSessionRequests.push(request.functionName);
+      return Promise.resolve({ hash: `0x${"2".repeat(64)}`, receipt: { status: "success", logs: [] }, path: "evm" });
+    };
+  });
   await navigate(page, "Vote");
   await page.locator(".proposal-list-item:visible").first().click();
   const vote = page.locator("[data-chain-switch-vote]:not([disabled])").first();
   await expect(vote).toBeVisible();
   const requestsBeforeVote = await page.evaluate(() => window.__walletRequests.metamask.length);
   await vote.click();
-  await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(2);
+  await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(1);
   await expect.poll(() => page.evaluate(() => window.__walletActivation)).toBe(true);
-  expect(await page.evaluate((offset) => window.__walletRequests.metamask.slice(offset), requestsBeforeVote)).toEqual(["eth_sendTransaction"]);
+  expect(await page.evaluate((offset) => window.__walletRequests.metamask.slice(offset), requestsBeforeVote)).toEqual([]);
+  expect(await page.evaluate(() => window.__quickSessionRequests)).toContain("vote");
   expect(await page.evaluate(() => window.__walletTransaction)).toMatchObject({
     from: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
     value: "0x0",
@@ -321,7 +331,7 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
   await send.locator('[name="recipient"]').fill("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
   await send.locator('[name="amount"]').fill("0.01");
   await send.locator('button[type="submit"]').click();
-  await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(3);
+  await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(2);
   await expect(page.locator("#kudora-chain-notification")).toHaveAttribute("data-state", "confirmed");
 
   await navigate(page, "Vote");
@@ -329,17 +339,28 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
   const proposalId = await proposal.getAttribute("data-chain-proposal-id");
   await proposal.click();
   await page.getByTestId(`discussion-proposal-${proposalId}`).click();
-  await page.evaluate(() => {
-    const writeEvm = window.KudoraChain.writeEvm.bind(window.KudoraChain);
-    window.KudoraChain.writeEvm = (request) => request.account
-      ? Promise.resolve({ hash: `0x${"2".repeat(64)}`, receipt: { status: "success", logs: [] }, path: "evm" })
-      : writeEvm(request);
-  });
   const discussion = page.getByTestId("discussion-form");
   await discussion.locator("textarea").first().fill("MetaMask signing request test");
   await discussion.locator('button[type="submit"]').click();
-  await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(3);
+  await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(2);
   await expect(page.locator("#kudora-chain-notification")).toHaveAttribute("data-state", "confirmed");
+  await page.evaluate(() => {
+    const zap = [...document.querySelectorAll("[data-chain-message-id] [data-chain-zap]")]
+      .find((button) => button.getClientRects().length > 0);
+    if (!zap) throw new Error("No visible Zap action");
+    zap.click();
+  });
+  const zapForm = page.locator("form[data-chain-zap-form]");
+  await expect(zapForm).toBeVisible();
+  await zapForm.locator('button[type="submit"]').click();
+  await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(2);
+  expect(await page.evaluate(() => window.__quickSessionRequests)).toContain("zap");
+
+  await page.evaluate(() => window.KudoraChain.swap("0.01"));
+  await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(3);
+  await page.evaluate(() => window.KudoraChain.delegate(window.KudoraChain.config.validators[0].operatorAddress, "0.01"));
+  await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(4);
+  expect(await page.evaluate(() => window.__quickSessionRequests)).not.toEqual(expect.arrayContaining(["swapExactKUDForUSDC", "delegate"]));
 });
 
 test("an unreachable MetaMask local RPC stops with repair instructions", async ({ page }) => {
@@ -703,7 +724,7 @@ test("the canonical Kudora UI drives real EVM and Cosmos business flows", async 
     ]);
   });
 
-  await test.step("the original vote panel records a native Keplr vote", async () => {
+  await test.step("the original vote panel changes a Keplr owner's vote through the quick session", async () => {
     await freshWallet(page, "Keplr", "bob");
     await openProposal(page, evmProposal.id);
     await expect(page.locator('.your-vote-note[data-vote-state="pending"]')).toBeVisible();
@@ -727,7 +748,7 @@ test("the canonical Kudora UI drives real EVM and Cosmos business flows", async 
     await expect(page.locator(".your-vote-note")).toContainText("No");
   });
 
-  await test.step("Keplr publishes and MetaMask votes through the same x/gov", async () => {
+  await test.step("Keplr publishes and MetaMask changes its vote through the same x/gov", async () => {
     await freshWallet(page, "Keplr", "carol");
     const title = `Open a public delivery tracker #${(await proposals()).length + 1}`;
     await publishProposal(page, title);
@@ -792,10 +813,11 @@ test("the canonical Kudora UI drives real EVM and Cosmos business flows", async 
     expect(await reactions(evmProposal.id, rootMessage.message_id)).toHaveLength(0);
   });
 
-  await test.step("connection grants seven days of quick comments and reactions, then revokes", async () => {
+  await test.step("connection grants seven days of quick comments, reactions, votes and zaps, then revokes", async () => {
     await freshWallet(page, "MetaMask", "alice");
     await openDiscussion(page, evmProposal.id);
     await expect(page.getByTestId("quick-interactions")).toContainText("7 days left");
+    await expect(page.getByTestId("quick-interactions")).toContainText("votes and zaps stay instant");
     await expect(page.locator('[data-chain-session="authorize"]')).toHaveCount(0);
     const sessionRecord = await page.evaluate(() => window.KudoraChain.quickSessionInfo());
     expect(sessionRecord.privateKey).toMatch(/^0x[0-9a-f]{64}$/);
@@ -811,15 +833,24 @@ test("the canonical Kudora UI drives real EVM and Cosmos business flows", async 
     const quick = (await discussionMessages(evmProposal.id)).find((message) => messageText(message) === quickText);
     expect(`0x${Buffer.from(quick.author, "base64").toString("hex")}`.toLowerCase()).toBe(local.accounts.alice.evmAddress.toLowerCase());
     await performTransaction(page, () => page.getByTestId(`message-${replyMessage.message_id}`).locator('[data-chain-reaction="1"]').click());
+    const sessionCosmosAddress = bech32.encode("kudo", bech32.toWords(Buffer.from(sessionAddress.slice(2), "hex")), false);
+    const remainingSessionFunds = await bankBalance(sessionCosmosAddress);
+    const ownerBeforeRefund = await bankBalance(local.accounts.alice.cosmosAddress);
+    expect(remainingSessionFunds).toBeGreaterThan(0n);
     await performTransaction(page, () => page.locator('[data-chain-session="revoke"]').click());
     expect((await fetch(`${REST}/kudora/discussion/v1/sessions/${sessionAddress}`)).status).toBe(404);
+    expect(await bankBalance(sessionCosmosAddress)).toBe(0n);
+    expect(await bankBalance(local.accounts.alice.cosmosAddress)).toBeGreaterThan(ownerBeforeRefund);
     expect(await page.evaluate(() => window.KudoraChain.quickSessionInfo())).toBeNull();
     await expect(page.getByTestId("quick-interactions")).toContainText("Enable for 7 days");
   });
 
-  await test.step("Zap transfers exact KUD to the comment author", async () => {
+  await test.step("a quick Zap transfers exact KUD without spending again from the primary wallet", async () => {
     await freshWallet(page, "MetaMask", "alice");
     await openDiscussion(page, evmProposal.id);
+    const sessionAddress = await page.evaluate(() => window.KudoraChain.sessionAccount().then((item) => item.address));
+    const sessionCosmosAddress = bech32.encode("kudo", bech32.toWords(Buffer.from(sessionAddress.slice(2), "hex")), false);
+    const sessionBefore = await bankBalance(sessionCosmosAddress);
     const aliceBefore = await bankBalance(local.accounts.alice.cosmosAddress);
     const bobBefore = await bankBalance(local.accounts.bob.cosmosAddress);
     await page.getByTestId(`message-${replyMessage.message_id}`).locator("[data-chain-zap]").click();
@@ -827,7 +858,8 @@ test("the canonical Kudora UI drives real EVM and Cosmos business flows", async 
     await form.locator('[name="amount"]').fill("0.01");
     await performTransaction(page, () => form.locator('button[type="submit"]').click());
     expect(await bankBalance(local.accounts.bob.cosmosAddress) - bobBefore).toBe(KUD / 100n);
-    expect(await bankBalance(local.accounts.alice.cosmosAddress)).toBeLessThan(aliceBefore - KUD / 100n);
+    expect(await bankBalance(sessionCosmosAddress)).toBeLessThan(sessionBefore - KUD / 100n);
+    expect(await bankBalance(local.accounts.alice.cosmosAddress)).toBe(aliceBefore);
   });
 
   await test.step("Move money executes the real local KUD / MockUSDC contract", async () => {

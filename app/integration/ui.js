@@ -1444,7 +1444,7 @@ function patchDiscussionPreview() {
 function sessionControls() {
   const record = state.chain?.quickSessionInfo();
   const days = record ? Math.max(1, Math.ceil((Number(record.expiresAt) - Date.now() / 1000) / 86_400)) : 0;
-  return `<div class="k-chain-session-controls" data-testid="quick-interactions"><span><small>QUICK INTERACTIONS</small><strong>${record ? `Comments and reactions stay instant · ${days} days left` : "One approval keeps comments and reactions instant for 7 days"}</strong></span>${record ? '<button type="button" data-chain-session="revoke">Turn off</button>' : '<button type="button" data-chain-session="authorize">Enable for 7 days</button>'}</div>`;
+  return `<div class="k-chain-session-controls" data-testid="quick-interactions"><span><small>QUICK INTERACTIONS</small><strong>${record ? `Comments, reactions, votes and zaps stay instant · ${days} days left` : "One approval keeps comments, reactions, votes and zaps instant for 7 days"}</strong></span>${record ? '<button type="button" data-chain-session="revoke">Turn off</button>' : '<button type="button" data-chain-session="authorize">Enable for 7 days</button>'}</div>`;
 }
 
 function visualItemsFromBuilder(builder, kind) {
@@ -1533,7 +1533,7 @@ function patchDiscussionPanel() {
       const record = state.chain.quickSessionInfo();
       const enabled = Boolean(record);
       const days = record ? Math.max(1, Math.ceil((Number(record.expiresAt) - Date.now() / 1000) / 86_400)) : 0;
-      controls.querySelector("strong").textContent = enabled ? `Comments and reactions stay instant · ${days} days left` : "One approval keeps comments and reactions instant for 7 days";
+      controls.querySelector("strong").textContent = enabled ? `Comments, reactions, votes and zaps stay instant · ${days} days left` : "One approval keeps comments, reactions, votes and zaps instant for 7 days";
       const authorize = controls.querySelector('[data-chain-session="authorize"]');
       if (authorize) authorize.textContent = "Enable for 7 days";
       const revoke = controls.querySelector('[data-chain-session="revoke"]');
@@ -1579,13 +1579,14 @@ function discussionPayload(form) {
 
 function openZapPanel(message) {
   const recipient = accountName(message.evmAuthor);
+  const quick = state.chain.quickSessionActive();
   const panel = openSidePanel(`
     ${panelHeader("ZAP", `Thank ${recipient}.`, "Send real KUD when someone adds something genuinely useful.")}
     <div class="k-panel-body"><form class="k-money-form k-zap-form" data-chain-zap-form>
       <div class="k-zap-person"><span class="representative-avatar portrait-civic"></span><div><small>YOU ARE THANKING</small><strong>${escapeHtml(recipient)}</strong></div></div>
       <fieldset><legend>Choose a small amount</legend><div class="k-zap-amounts">${[0.01, 0.1, 0.5, 1].map((amount, index) => `<button type="button" class="${index === 0 ? "selected" : ""}" data-chain-zap-amount="${amount}">${amount} KUD</button>`).join("")}</div></fieldset>
-      <label><span>Or enter another amount</span><div class="k-amount-input"><input name="amount" type="number" min="0.000001" step="0.000001" value="0.01"><b>KUD</b></div></label>
-      <div class="k-cost-preview"><span>${escapeHtml(recipient)} receives</span><b data-chain-zap-receives>0.01 KUD</b><span>Network fee</span><b>Calculated by wallet</b></div>
+      <label><span>Or enter another amount · maximum 1 KUD</span><div class="k-amount-input"><input name="amount" type="number" min="0.000001" max="1" step="0.000001" value="0.01"><b>KUD</b></div></label>
+      <div class="k-cost-preview"><span>${escapeHtml(recipient)} receives</span><b data-chain-zap-receives>0.01 KUD</b><span>Network fee</span><b>${quick ? "Covered by Quick interactions" : "Calculated by wallet"}</b></div>
       <button class="k-confirm-button zap" type="submit">Zap ${escapeHtml(recipient)} <span>ϟ</span></button>
     </form></div>`, `Zap ${recipient}`);
   panel.dataset.chainMessageId = message.messageId;
