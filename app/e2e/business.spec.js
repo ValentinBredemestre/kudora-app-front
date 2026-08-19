@@ -218,7 +218,6 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
       },
     };
     let activeChainId = "0x1d4c1";
-    let localnetAdded = false;
     const metaMaskProvider = {
       isMetaMask: true,
       request: async ({ method, params }) => {
@@ -230,18 +229,12 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
         }
         if (method === "wallet_switchEthereumChain") {
           const requested = params?.[0]?.chainId;
-          if (requested !== activeChainId && !localnetAdded) {
-            const error = new Error("Unknown chain");
-            error.code = 4902;
-            throw error;
-          }
           activeChainId = requested;
           return null;
         }
         if (method === "wallet_addEthereumChain") {
           window.__walletAddedChain = params?.[0];
-          localnetAdded = true;
-          return null;
+          throw new Error("Could not add network that points to same RPC endpoint");
         }
         if (method === "eth_chainId") return activeChainId;
         if (method === "eth_sendTransaction") {
@@ -300,8 +293,8 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
   await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_requestAccounts").length)).toBe(1);
   await expect.poll(() => page.evaluate(() => window.__walletRequests.brave.length)).toBe(0);
   await expect.poll(() => page.evaluate(() => window.__walletRequests.announced.length)).toBe(0);
-  await expect.poll(() => page.evaluate(() => window.__walletAddedChain?.rpcUrls?.[0] || "")).toContain(":3000/evm-rpc");
-  await expect.poll(() => page.evaluate(() => window.__walletAddedChain?.chainId || "")).toBe("0x1d4c2");
+  expect(await page.evaluate(() => window.__walletAddedChain)).toBeUndefined();
+  expect(await page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "wallet_addEthereumChain"))).toEqual([]);
   await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(1);
   await expect.poll(() => page.evaluate(() => Boolean(window.KudoraChain.quickSessionInfo()))).toBe(true);
   await page.evaluate(() => {
@@ -392,7 +385,7 @@ test("MetaMask connected after page load is detected without a refresh", async (
       request: async ({ method }) => {
         if (method === "eth_accounts") return account ? [account] : [];
         if (method === "eth_requestAccounts") return [address];
-        if (method === "eth_chainId") return "0x1d4c2";
+        if (method === "eth_chainId") return "0x1d4c1";
         throw new Error(`Unexpected MetaMask request: ${method}`);
       },
       on: (event, listener) => listeners.set(event, listener),
@@ -419,7 +412,7 @@ test("an already authorized MetaMask account is restored after reload and fronte
       request: async ({ method }) => {
         window.__restoredWalletRequests.push(method);
         if (method === "eth_accounts") return window.__restoredWalletAccount ? [window.__restoredWalletAccount] : [];
-        if (method === "eth_chainId") return "0x1d4c2";
+        if (method === "eth_chainId") return "0x1d4c1";
         throw new Error(`Silent restoration must not call ${method}`);
       },
       on: (event, listener) => listeners.set(event, listener),
