@@ -294,7 +294,7 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
   await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_requestAccounts").length)).toBe(1);
   await expect.poll(() => page.evaluate(() => window.__walletRequests.brave.length)).toBe(0);
   await expect.poll(() => page.evaluate(() => window.__walletRequests.announced.length)).toBe(0);
-  await expect.poll(() => page.evaluate(() => window.__walletAddedChain?.rpcUrls?.[0] || "")).toContain(":8545");
+  await expect.poll(() => page.evaluate(() => window.__walletAddedChain?.rpcUrls?.[0] || "")).toContain(":3000/evm-rpc");
   await expect.poll(() => page.evaluate(() => window.__walletRequests.metamask.filter((method) => method === "eth_sendTransaction").length)).toBe(1);
   await expect.poll(() => page.evaluate(() => Boolean(window.KudoraChain.quickSessionInfo()))).toBe(true);
   await page.evaluate(() => {
@@ -363,7 +363,7 @@ test("MetaMask selection bypasses Brave Wallet and coalesces repeated clicks", a
   expect(await page.evaluate(() => window.__quickSessionRequests)).not.toEqual(expect.arrayContaining(["swapExactKUDForUSDC", "delegate"]));
 });
 
-test("an unreachable MetaMask local RPC stops with repair instructions", async ({ page }) => {
+test("an unreachable MetaMask local RPC stops without an endless confirmation", async ({ page }) => {
   await page.addInitScript((address) => {
     window.ethereum = {
       isMetaMask: true,
@@ -380,9 +380,63 @@ test("an unreachable MetaMask local RPC stops with repair instructions", async (
   await page.getByRole("button", { name: /Connect wallet/i }).click();
   await page.locator('[data-chain-connect="metamask"]').click();
   await expect(page.getByTestId("transaction-status")).toHaveAttribute("data-state", "failed");
-  await expect(page.getByTestId("transaction-status")).toContainText("Remove that network from MetaMask");
+  await expect(page.getByTestId("transaction-status")).toContainText("Switch to another network and back to Kudora");
   await expect(page.locator("#kudora-chain-notification")).toHaveAttribute("data-state", "failed");
   await expect(page.locator("#kudora-chain-notification")).not.toContainText("Confirm in your wallet");
+});
+
+test("an already authorized MetaMask account is restored after reload and frontend redeploy", async ({ page }) => {
+  await page.addInitScript(({ alice, bob }) => {
+    window.__restoredWalletRequests = [];
+    window.__restoredWalletAccount = alice;
+    const listeners = new Map();
+    const provider = {
+      isMetaMask: true,
+      request: async ({ method }) => {
+        window.__restoredWalletRequests.push(method);
+        if (method === "eth_accounts") return window.__restoredWalletAccount ? [window.__restoredWalletAccount] : [];
+        throw new Error(`Silent restoration must not call ${method}`);
+      },
+      on: (event, listener) => listeners.set(event, listener),
+      removeListener: (event, listener) => {
+        if (listeners.get(event) === listener) listeners.delete(event);
+      },
+    };
+    window.__restoredWallet = {
+      selectBob() {
+        window.__restoredWalletAccount = bob;
+        listeners.get("accountsChanged")?.([bob]);
+      },
+      disconnect() {
+        window.__restoredWalletAccount = "";
+        listeners.get("accountsChanged")?.([]);
+      },
+    };
+    window.ethereum = provider;
+  }, {
+    alice: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    bob: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+  });
+
+  await openApp(page);
+  await expect.poll(() => page.evaluate(() => window.KudoraChain.walletMode)).toBe("metamask");
+  await expect(page.getByRole("button", { name: /Connect wallet/i })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Open connected account" })).toContainText("0xf39Fd6e…92266");
+  expect(await page.evaluate(() => window.__restoredWalletRequests)).toEqual(["eth_accounts"]);
+  await expect.poll(() => page.evaluate(() => window.KudoraChain.config.evmRpcUrl)).toContain(":3000/evm-rpc");
+
+  await page.reload({ waitUntil: "networkidle" });
+  await expect.poll(() => page.evaluate(() => window.KudoraChain?.walletMode)).toBe("metamask");
+  await expect(page.getByRole("button", { name: "Open connected account" })).toContainText("0xf39Fd6e…92266");
+  expect(await page.evaluate(() => window.__restoredWalletRequests)).toEqual(["eth_accounts"]);
+
+  await page.evaluate(() => window.__restoredWallet.selectBob());
+  await expect(page.getByRole("button", { name: "Open connected account" })).toContainText("0x7099797…c79C8");
+  await expect.poll(() => page.evaluate(() => window.KudoraChain.account().evmAddress)).toBe("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+
+  await page.evaluate(() => window.__restoredWallet.disconnect());
+  await expect(page.getByRole("button", { name: /Connect wallet/i })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.KudoraChain.walletMode)).toBe(null);
 });
 
 test("MetaMask never falls back to a local test wallet", async ({ page }) => {

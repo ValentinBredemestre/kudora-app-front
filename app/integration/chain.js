@@ -303,6 +303,8 @@ export class KudoraChain {
     this.evmAccount = null;
     this.ethereumProvider = null;
     this.ethereumProviders = new Map();
+    this.watchedEthereumProvider = null;
+    this.handleEthereumAccountsChanged = null;
     this.cosmosAddress = null;
     this.connecting = null;
     this.authorizingSession = null;
@@ -359,9 +361,7 @@ export class KudoraChain {
       // the real prompt outside the user's click and some wallets then ignore it.
       const addresses = await provider.request({ method: "eth_requestAccounts" });
       await this.ensureEvmChain(provider);
-      this.ethereumProvider = provider;
-      this.evmAccount = { address: addresses[0] };
-      this.cosmosAddress = cosmosFromEvm(addresses[0]);
+      this.useMetaMaskAccount(provider, addresses[0]);
     } else if (mode === "keplr") {
       if (!window.keplr) throw new Error("Keplr is not installed");
       await this.suggestKeplrChain();
@@ -373,6 +373,50 @@ export class KudoraChain {
       throw new Error(`Unknown wallet mode ${mode}`);
     }
     return this.account();
+  }
+
+  useMetaMaskAccount(provider, address) {
+    if (!address) throw new Error("MetaMask did not return an account");
+    this.walletMode = "metamask";
+    this.ethereumProvider = provider;
+    this.evmAccount = { address: getAddress(address) };
+    this.cosmosAddress = cosmosFromEvm(this.evmAccount.address);
+    this.watchMetaMask(provider);
+  }
+
+  watchMetaMask(provider) {
+    if (this.watchedEthereumProvider === provider || typeof provider?.on !== "function") return;
+    if (this.watchedEthereumProvider && this.handleEthereumAccountsChanged) {
+      this.watchedEthereumProvider.removeListener?.("accountsChanged", this.handleEthereumAccountsChanged);
+    }
+    this.handleEthereumAccountsChanged = (addresses = []) => {
+      if (this.ethereumProvider !== provider) return;
+      if (addresses[0]) {
+        this.evmAccount = { address: getAddress(addresses[0]) };
+        this.cosmosAddress = cosmosFromEvm(this.evmAccount.address);
+      } else {
+        this.walletMode = null;
+        this.evmAccount = null;
+        this.ethereumProvider = null;
+        this.cosmosAddress = null;
+      }
+      window.dispatchEvent(new CustomEvent("kudora:walletchange"));
+    };
+    provider.on("accountsChanged", this.handleEthereumAccountsChanged);
+    this.watchedEthereumProvider = provider;
+  }
+
+  async restoreMetaMask() {
+    if (this.walletMode) return this.account();
+    try {
+      const provider = await this.metaMaskProvider();
+      const addresses = await provider.request({ method: "eth_accounts" });
+      if (!addresses?.[0]) return null;
+      this.useMetaMaskAccount(provider, addresses[0]);
+      return this.account();
+    } catch {
+      return null;
+    }
   }
 
   account() {
@@ -462,7 +506,7 @@ export class KudoraChain {
           "MetaMask could not reach the Kudora local network",
         );
       } catch {
-        throw new Error(`The Kudora network saved in MetaMask cannot reach ${this.config.evmRpcUrl}. Remove that network from MetaMask, reconnect here, and accept the Kudora network.`);
+        throw new Error(`The Kudora network in MetaMask cannot reach ${this.config.evmRpcUrl}. Switch to another network and back to Kudora, then retry.`);
       }
     }
   }

@@ -2077,6 +2077,12 @@ async function start() {
       loadDiscussion,
       refreshAccount,
     };
+    window.addEventListener("kudora:walletchange", () => {
+      renderTopWallet();
+      refreshAccount().catch((error) => setStatus("failed", error.message));
+      schedulePatch();
+    });
+    await state.chain.restoreMetaMask();
     setStatus("idle", "Ready");
     renderTopWallet();
     state.validators = (state.chain.config.validators || []).map((validator) => ({
