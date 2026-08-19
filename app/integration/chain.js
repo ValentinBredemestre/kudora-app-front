@@ -23,6 +23,7 @@ const METADATA_LIMIT = 8 * 1024;
 const CONTENT_LIMIT = 8 * 1024;
 const QUICK_SESSION_DURATION_SECONDS = 7 * 24 * 60 * 60;
 const QUICK_SESSION_FUND_KUD = "1.05";
+const WALLET_REQUEST_TIMEOUT = 90_000;
 const encoder = new TextEncoder();
 
 function withTimeout(promise, milliseconds, message) {
@@ -305,6 +306,9 @@ export class KudoraChain {
     this.ethereumProviders = new Map();
     this.watchedEthereumProvider = null;
     this.handleEthereumAccountsChanged = null;
+    this.handleEthereumChainChanged = null;
+    this.currentEthereumChainId = null;
+    this.switchingEthereumChain = null;
     this.cosmosAddress = null;
     this.connecting = null;
     this.authorizingSession = null;
@@ -313,6 +317,10 @@ export class KudoraChain {
       const detail = event.detail;
       if (detail?.info?.uuid && detail.provider?.request) {
         this.ethereumProviders.set(detail.info.uuid, detail);
+        if (detail.info.rdns === "io.metamask" || /^metamask$/i.test(detail.info.name)) {
+          const provider = this.currentMetaMaskProvider();
+          if (provider === detail.provider) this.observeMetaMask(provider);
+        }
       }
     });
     this.requestEthereumProviders();
@@ -347,30 +355,37 @@ export class KudoraChain {
   }
 
   async connectNow(mode, accountName) {
-    this.walletMode = mode;
     this.accountName = accountName;
-    if (mode.startsWith("local-")) {
-      await this.loadLocalWallets();
-      const privateKey = this.localWallets.accounts[accountName]?.privateKey;
-      if (!privateKey) throw new Error(`Unknown local account ${accountName}`);
-      this.evmAccount = privateKeyToAccount(privateKey);
-      this.cosmosAddress = this.config.accounts[accountName].cosmosAddress;
-    } else if (mode === "metamask") {
-      const provider = await this.metaMaskProvider();
-      // Request access immediately. Asking for passive accounts first can move
-      // the real prompt outside the user's click and some wallets then ignore it.
-      const addresses = await provider.request({ method: "eth_requestAccounts" });
-      await this.ensureEvmChain(provider);
-      this.useMetaMaskAccount(provider, addresses[0]);
-    } else if (mode === "keplr") {
-      if (!window.keplr) throw new Error("Keplr is not installed");
-      await this.suggestKeplrChain();
-      await window.keplr.enable(this.config.cosmosChainId);
-      const key = await window.keplr.getKey(this.config.cosmosChainId);
-      this.cosmosAddress = key.bech32Address;
-      this.evmAccount = { address: evmFromCosmos(key.bech32Address) };
-    } else {
-      throw new Error(`Unknown wallet mode ${mode}`);
+    try {
+      if (mode.startsWith("local-")) {
+        await this.loadLocalWallets();
+        const privateKey = this.localWallets.accounts[accountName]?.privateKey;
+        if (!privateKey) throw new Error(`Unknown local account ${accountName}`);
+        this.walletMode = mode;
+        this.evmAccount = privateKeyToAccount(privateKey);
+        this.cosmosAddress = this.config.accounts[accountName].cosmosAddress;
+      } else if (mode === "metamask") {
+        const provider = await this.metaMaskProvider();
+        // Request access immediately. Asking for passive accounts first can move
+        // the real prompt outside the user's click and some wallets then ignore it.
+        this.watchMetaMask(provider);
+        const addresses = await this.walletRequest(provider, { method: "eth_requestAccounts" }, "MetaMask did not answer the connection request");
+        this.useMetaMaskAccount(provider, addresses[0]);
+        await this.ensureEvmChain(provider);
+      } else if (mode === "keplr") {
+        if (!window.keplr) throw new Error("Keplr is not installed");
+        await this.suggestKeplrChain();
+        await window.keplr.enable(this.config.cosmosChainId);
+        const key = await window.keplr.getKey(this.config.cosmosChainId);
+        this.walletMode = mode;
+        this.cosmosAddress = key.bech32Address;
+        this.evmAccount = { address: evmFromCosmos(key.bech32Address) };
+      } else {
+        throw new Error(`Unknown wallet mode ${mode}`);
+      }
+    } catch (error) {
+      if (!this.evmAccount) this.walletMode = null;
+      throw error;
     }
     return this.account();
   }
@@ -388,13 +403,12 @@ export class KudoraChain {
     if (this.watchedEthereumProvider === provider || typeof provider?.on !== "function") return;
     if (this.watchedEthereumProvider && this.handleEthereumAccountsChanged) {
       this.watchedEthereumProvider.removeListener?.("accountsChanged", this.handleEthereumAccountsChanged);
+      this.watchedEthereumProvider.removeListener?.("chainChanged", this.handleEthereumChainChanged);
     }
     this.handleEthereumAccountsChanged = (addresses = []) => {
-      if (this.ethereumProvider !== provider) return;
       if (addresses[0]) {
-        this.evmAccount = { address: getAddress(addresses[0]) };
-        this.cosmosAddress = cosmosFromEvm(this.evmAccount.address);
-      } else {
+        this.useMetaMaskAccount(provider, addresses[0]);
+      } else if (this.ethereumProvider === provider || this.watchedEthereumProvider === provider) {
         this.walletMode = null;
         this.evmAccount = null;
         this.ethereumProvider = null;
@@ -402,17 +416,35 @@ export class KudoraChain {
       }
       window.dispatchEvent(new CustomEvent("kudora:walletchange"));
     };
+    this.handleEthereumChainChanged = (chainId) => {
+      this.currentEthereumChainId = String(chainId || "").toLowerCase();
+    };
     provider.on("accountsChanged", this.handleEthereumAccountsChanged);
+    provider.on("chainChanged", this.handleEthereumChainChanged);
     this.watchedEthereumProvider = provider;
+  }
+
+  async observeMetaMask(provider) {
+    this.watchMetaMask(provider);
+    if (this.ethereumProvider) return;
+    try {
+      const addresses = await provider.request({ method: "eth_accounts" });
+      if (addresses?.[0]) {
+        this.useMetaMaskAccount(provider, addresses[0]);
+        window.dispatchEvent(new CustomEvent("kudora:walletchange"));
+      }
+    } catch { /* MetaMask may still be locked */ }
   }
 
   async restoreMetaMask() {
     if (this.walletMode) return this.account();
     try {
       const provider = await this.metaMaskProvider();
+      this.watchMetaMask(provider);
       const addresses = await provider.request({ method: "eth_accounts" });
       if (!addresses?.[0]) return null;
       this.useMetaMaskAccount(provider, addresses[0]);
+      this.currentEthereumChainId = String(await provider.request({ method: "eth_chainId" }).catch(() => "")).toLowerCase();
       return this.account();
     } catch {
       return null;
@@ -470,45 +502,43 @@ export class KudoraChain {
 
   async ensureEvmChain(provider) {
     const chainId = `0x${Number(this.config.evmChainId).toString(16)}`;
+    if (this.currentEthereumChainId === chainId) return;
+    if (this.switchingEthereumChain) return this.switchingEthereumChain;
     const chain = {
       chainId,
-      chainName: "Kudora",
+      chainName: this.config.swap?.localnetOnly ? "Kudora Localnet" : "Kudora",
       nativeCurrency: { name: "KUD", symbol: "KUD", decimals: 18 },
       rpcUrls: [this.config.evmRpcUrl],
       iconUrls: [new URL("/kudora-token.png", location.origin).href],
     };
-    const addChain = () => provider.request({
+    const addChain = () => this.walletRequest(provider, {
       method: "wallet_addEthereumChain",
       params: [chain],
-    });
-    try {
-      await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId }] });
-    } catch (error) {
-      if (error.code !== 4902) throw error;
-      await addChain();
-      await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId }] });
-    }
-
-    if (!this.config.swap?.localnetOnly) return;
-    try {
-      await withTimeout(
-        provider.request({ method: "eth_blockNumber" }),
-        3_000,
-        "MetaMask could not reach the Kudora local network",
-      );
-    } catch {
-      await addChain();
-      await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId }] });
-      try {
-        await withTimeout(
-          provider.request({ method: "eth_blockNumber" }),
-          3_000,
-          "MetaMask could not reach the Kudora local network",
-        );
-      } catch {
-        throw new Error(`The Kudora network in MetaMask cannot reach ${this.config.evmRpcUrl}. Switch to another network and back to Kudora, then retry.`);
+    }, "MetaMask did not answer the network request");
+    this.switchingEthereumChain = (async () => {
+      const activeChainId = String(await provider.request({ method: "eth_chainId" }).catch(() => "")).toLowerCase();
+      if (activeChainId === chainId) {
+        this.currentEthereumChainId = chainId;
+        return;
       }
+      try {
+        await this.walletRequest(provider, { method: "wallet_switchEthereumChain", params: [{ chainId }] }, "MetaMask did not answer the network request");
+      } catch (error) {
+        if (error.code !== 4902) throw error;
+        await addChain();
+        await this.walletRequest(provider, { method: "wallet_switchEthereumChain", params: [{ chainId }] }, "MetaMask did not answer the network request");
+      }
+      this.currentEthereumChainId = chainId;
+    })();
+    try {
+      await this.switchingEthereumChain;
+    } finally {
+      this.switchingEthereumChain = null;
     }
+  }
+
+  walletRequest(provider, request, timeoutMessage) {
+    return withTimeout(provider.request(request), WALLET_REQUEST_TIMEOUT, timeoutMessage);
   }
 
   async suggestKeplrChain() {
@@ -551,12 +581,13 @@ export class KudoraChain {
     throw new Error("Connect a wallet first");
   }
 
-  metaMaskTransaction({ to, data = "0x", value = 0n, gas }) {
+  async metaMaskTransaction({ to, data = "0x", value = 0n, gas }) {
     if (this.walletMode !== "metamask" || !this.ethereumProvider?.request || !this.evmAccount?.address) {
       throw new Error("Connect MetaMask first");
     }
     const quantity = (amount) => `0x${BigInt(amount).toString(16)}`;
-    return this.ethereumProvider.request({
+    await this.ensureEvmChain(this.ethereumProvider);
+    return this.walletRequest(this.ethereumProvider, {
       method: "eth_sendTransaction",
       params: [{
         from: this.evmAccount.address,
@@ -566,7 +597,7 @@ export class KudoraChain {
         gas: quantity(gas),
         gasPrice: quantity(GAS_PRICE),
       }],
-    });
+    }, "MetaMask did not answer the approval request");
   }
 
   async balances() {
@@ -732,14 +763,8 @@ export class KudoraChain {
   }
 
   async vote(proposalId, option) {
-    if (this.quickSessionActive()) {
-      const session = await this.sessionAccount();
-      return this.writeEvm({ account: session, address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "vote", args: [BigInt(proposalId), Number(option)] });
-    }
-    if (this.isKeplr()) {
-      return this.broadcastCosmos([{ typeUrl: "/cosmos.gov.v1.MsgVote", value: encodeMsgVote(this.cosmosAddress, proposalId, option) }], "Kudora governance vote");
-    }
-    return this.writeEvm({ address: this.config.governancePrecompileAddress, abi: govAbi, functionName: "vote", args: [this.evmAccount.address, BigInt(proposalId), Number(option), ""] });
+    const session = await this.quickInteractionAccount();
+    return this.writeEvm({ account: session, address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "vote", args: [BigInt(proposalId), Number(option)] });
   }
 
   async proposals() {
@@ -1026,32 +1051,20 @@ export class KudoraChain {
 
   async postPayload(payload, proposalId = 0, parentId = 0) {
     const content = contentBytes(payload);
-    if (this.quickSessionActive()) {
-      const session = await this.sessionAccount();
-      return this.writeEvm({ account: session, address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "post", args: [BigInt(proposalId), BigInt(parentId), hexFromBytes(content)] });
-    }
-    if (this.isKeplr()) return this.broadcastCosmos([this.discussionMessage("post", { proposalId, parentId, content })], "Kudora discussion");
-    return this.writeEvm({ address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "post", args: [BigInt(proposalId), BigInt(parentId), hexFromBytes(content)] });
+    const session = await this.quickInteractionAccount();
+    return this.writeEvm({ account: session, address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "post", args: [BigInt(proposalId), BigInt(parentId), hexFromBytes(content)] });
   }
 
   async react(proposalId, messageId, reaction) {
-    if (this.quickSessionActive()) {
-      const session = await this.sessionAccount();
-      return this.writeEvm({ account: session, address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "react", args: [BigInt(proposalId), BigInt(messageId), Number(reaction)] });
-    }
-    if (this.isKeplr()) return this.broadcastCosmos([this.discussionMessage("react", { proposalId, messageId, reaction })], "Kudora reaction");
-    return this.writeEvm({ address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "react", args: [BigInt(proposalId), BigInt(messageId), Number(reaction)] });
+    const session = await this.quickInteractionAccount();
+    return this.writeEvm({ account: session, address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "react", args: [BigInt(proposalId), BigInt(messageId), Number(reaction)] });
   }
 
   async zap(proposalId, messageId, amount) {
     const value = parseEther(String(amount));
     if (value <= 0n || value > parseEther("1")) throw new Error("Choose a zap between 0 and 1 KUD");
-    if (this.quickSessionActive()) {
-      const session = await this.sessionAccount();
-      return this.writeEvm({ account: session, address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "zap", args: [BigInt(proposalId), BigInt(messageId), value] });
-    }
-    if (this.isKeplr()) return this.broadcastCosmos([this.discussionMessage("zap", { proposalId, messageId, amount: value.toString() })], "Kudora Zap");
-    return this.writeEvm({ address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "zap", args: [BigInt(proposalId), BigInt(messageId), value] });
+    const session = await this.quickInteractionAccount();
+    return this.writeEvm({ account: session, address: this.config.discussionPrecompileAddress, abi: discussionAbi, functionName: "zap", args: [BigInt(proposalId), BigInt(messageId), value] });
   }
 
   async messages(proposalId = 0) {
@@ -1179,6 +1192,11 @@ export class KudoraChain {
     } finally {
       this.authorizingSession = null;
     }
+  }
+
+  async quickInteractionAccount() {
+    await this.ensureQuickSession();
+    return this.sessionAccount();
   }
 
   async session() {
